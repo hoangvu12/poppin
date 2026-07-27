@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import sharp from 'sharp';
 import { IMG_DIR } from './db.mjs';
 
 const BYTESCALE = 'https://bytescale.mobbin.com/FW25bBB/image/mobbin.com/prod';
@@ -8,7 +7,7 @@ const BYTESCALE = 'https://bytescale.mobbin.com/FW25bBB/image/mobbin.com/prod';
 /**
  * The data layer hands back storage URLs that are internal keys rather than
  * fetchable addresses, so requesting them directly fails. Map the key onto the
- * CDN that actually serves it, at the size we want to cache.
+ * CDN that actually serves it, at the size and format we want to cache.
  */
 export function toServableUrl(url, { width = 1920 } = {}) {
   if (!url) return null;
@@ -18,14 +17,35 @@ export function toServableUrl(url, { width = 1920 } = {}) {
   return `${BYTESCALE}/${m[1]}?f=webp&w=${width}&q=85`;
 }
 
+const EXT_BY_TYPE = {
+  'image/webp': 'webp',
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/avif': 'avif',
+  'image/gif': 'gif',
+};
+
+/** Any already-cached file for this id, whatever format it was served in. */
+export function imagePath(id) {
+  for (const ext of ['webp', 'png', 'jpg', 'avif', 'gif']) {
+    const p = path.join(IMG_DIR, `${id}.${ext}`);
+    if (fs.existsSync(p) && fs.statSync(p).size > 0) return p;
+  }
+  return null;
+}
+
 /**
- * Download the image exactly as the page serves it (watermark and all) and
- * normalise to webp for compact local storage.
+ * Download and store the image as served. The CDN is asked for webp, so the
+ * bytes are already in the format we want. Re-encoding them locally would cost
+ * a large native image dependency and lose quality for no benefit, so the
+ * response body is written straight to disk.
  */
 export async function cacheImage(id, url, { force = false } = {}) {
   if (!url) return null;
-  const dest = path.join(IMG_DIR, `${id}.webp`);
-  if (!force && fs.existsSync(dest) && fs.statSync(dest).size > 0) return dest;
+  if (!force) {
+    const existing = imagePath(id);
+    if (existing) return existing;
+  }
 
   const res = await fetch(toServableUrl(url), {
     headers: {
@@ -35,12 +55,13 @@ export async function cacheImage(id, url, { force = false } = {}) {
     },
   });
   if (!res.ok) throw new Error(`image ${res.status} for ${id}`);
-  const buf = Buffer.from(await res.arrayBuffer());
-  await sharp(buf).webp({ quality: 82 }).toFile(dest);
-  return dest;
-}
 
-export function imagePath(id) {
-  const p = path.join(IMG_DIR, `${id}.webp`);
-  return fs.existsSync(p) ? p : null;
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+  const ext = EXT_BY_TYPE[type] || 'webp';
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (!buf.length) throw new Error(`empty image body for ${id}`);
+
+  const dest = path.join(IMG_DIR, `${id}.${ext}`);
+  fs.writeFileSync(dest, buf);
+  return dest;
 }

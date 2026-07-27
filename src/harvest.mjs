@@ -3,7 +3,7 @@ import { collectListing, collectFlows, extractDetail, extractTaxonomy } from './
 import { cacheImage } from './images.mjs';
 import { upsertScreen, upsertApp, upsertTaxonomy, setTags, reindex, reindexFlow, upsertFlow } from './db.mjs';
 
-const KINDS = ['screens', 'ui-elements', 'flows'];
+import { KINDS } from './config.mjs';
 
 async function goto(page, url, delay) {
   await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });

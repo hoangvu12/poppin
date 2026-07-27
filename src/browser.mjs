@@ -1,9 +1,10 @@
 import { chromium } from 'playwright-core';
 import path from 'node:path';
 import { DATA_DIR } from './db.mjs';
+import { BASE } from './config.mjs';
 
 export const PROFILE_DIR = process.env.POPPIN_PROFILE || path.join(DATA_DIR, 'profile');
-export const BASE = 'https://mobbin.com';
+export { BASE };
 
 /**
  * Launch a real Chrome against a persistent profile, so a manual login in

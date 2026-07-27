@@ -60,14 +60,15 @@ you installed the CLI first.
 
 ## Sign in
 
-Two options. Both persist the session for later commands, and you only do this
-once.
+Sign in once by pasting your session cookie. The session then persists for later
+commands.
 
-### Paste a cookie from any browser
+poppin has no automated login. Mobbin signs in through Google, which frequently
+refuses automated browser windows with a "this browser may not be secure" error,
+so an automated login flow is unreliable by design. Pasting a cookie from a
+browser you already trust works every time and takes about ten seconds.
 
-This avoids the automated login window, and it sidesteps the "this browser may
-not be secure" block that Google SSO applies to automated browsers. Log into
-mobbin.com in any browser, open the DevTools console, and run:
+Log into mobbin.com in any browser, open the DevTools console, and run:
 
 ```js
 copy(document.cookie.split('; ').filter(c => c.startsWith('sb-')).join('\n'))
@@ -88,16 +89,7 @@ the lines it produces.
 `import-cookies` exits 0 when the session works, 1 when the cookie was rejected,
 and 2 when no session cookie was found in the input.
 
-### Automated login
-
-```bash
-poppin login
-```
-
-This opens a Chrome window for you to sign in. Google SSO sometimes refuses
-automated browsers, in which case use the cookie method.
-
-Check either with `poppin whoami`.
+Check it worked with `poppin whoami`.
 
 ## Usage
 
@@ -137,7 +129,6 @@ poppin screen 3d951da4
 poppin flows onboarding
 poppin flow c6d624b6                     # ordered frame sequence
 poppin app Monarch
-poppin analyze 3d951da4                  # palette, theme, contrast, layout
 poppin stats
 ```
 
@@ -194,17 +185,33 @@ image alt text.
 
 ```
 bin/poppin.mjs        CLI entry point
-src/api.mjs           authenticated JSON and RSC access
+src/config.mjs        constants shared by the light and browser paths
+src/db.mjs            SQLite schema and FTS index
+src/search.mjs        FTS query building and ranking
+src/images.mjs        image cache and CDN URL mapping
+src/cookies.mjs       cookie parsing and session import
+src/api.mjs           authenticated data access
 src/harvest-api.mjs   catalog sync and per-app fetch
 src/browser.mjs       persistent Chrome profile
-src/cookies.mjs       cookie parsing and session import
-src/extract.mjs       DOM extractors for the anonymous surface
-src/harvest.mjs       anonymous crawl orchestration
-src/db.mjs            SQLite schema and FTS index
-src/images.mjs        image cache and CDN URL rewriting
-src/analyze.mjs       palette, theme, contrast, layout extraction
+src/extract.mjs       DOM extractors for the public browse pages
+src/harvest.mjs       crawl orchestration for those pages
 skills/poppin/        agent skill
 ```
+
+Commands that only read the local library never import playwright, so `find`,
+`search`, `flow` and the rest start immediately.
+
+## Dependencies
+
+Two, on purpose.
+
+`commander` parses arguments. `playwright-core` drives the browser, and it uses
+the Chrome you already have rather than downloading its own, which is why it
+costs about 13 MB rather than several hundred.
+
+There is no image processing dependency. The CDN is asked for webp and the
+response body is written straight to disk, so nothing needs decoding or
+re-encoding locally.
 
 ## Agent use
 

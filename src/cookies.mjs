@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import { BASE } from './browser.mjs';
 
 const SUPABASE_REF = 'ujasntkfphywizsdaapi';
 // Everything we actually need to carry a session. The auth-token may be chunked

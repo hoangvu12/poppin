@@ -94,7 +94,6 @@ poppin sync -p mobile -k flows --slug creating-account -n 15 --images
 poppin search "empty state" --images --json
 poppin search onboarding --flows --json
 poppin flow <id> --json                    # ordered frame sequence
-poppin analyze <id>                        # palette, theme, contrast, layout
 ```
 
 Search JSON includes `local_path` for each cached screenshot. Read those files

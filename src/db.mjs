@@ -114,13 +114,6 @@ function migrate(db) {
     PRIMARY KEY (flow_id, ord)
   );
 
-  -- analysis output (palette etc.), one row per screen
-  CREATE TABLE IF NOT EXISTS analysis (
-    screen_id TEXT PRIMARY KEY REFERENCES screens(id) ON DELETE CASCADE,
-    json      TEXT NOT NULL,
-    updated   TEXT NOT NULL
-  );
-
   CREATE VIRTUAL TABLE IF NOT EXISTS screens_fts USING fts5(
     id UNINDEXED, name, app_name, description, tags,
     tokenize = 'porter unicode61'
@@ -268,7 +261,6 @@ export function stats(db) {
     flows: one('SELECT COUNT(*) c FROM flows').c,
     flowFrames: one('SELECT COUNT(*) c FROM flow_screens').c,
     flowFramesCached: one('SELECT COUNT(*) c FROM flow_screens WHERE local_path IS NOT NULL').c,
-    analyzed: one('SELECT COUNT(*) c FROM analysis').c,
     taxonomy: db.prepare('SELECT kind, COUNT(*) c FROM taxonomy GROUP BY kind').all(),
   };
 }

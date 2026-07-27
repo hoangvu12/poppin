@@ -36,7 +36,6 @@
   },
   "dependencies": {
     "commander": "^15.0.0",
-    "playwright-core": "^1.62.0",
-    "sharp": "^0.35.3"
+    "playwright-core": "^1.62.0"
   }
 }
