@@ -11,20 +11,18 @@ the user.
 
 ## Locating the command
 
-poppin is a CLI that must be installed separately from this skill. Resolve it in
-this order and use whichever works:
+Installing this skill copies these instructions only, not the CLI. Resolve the
+command in this order and use the first that works:
 
-1. `poppin` if it is on PATH (installed with `npm i -g poppin-cli`)
-2. `node bin/poppin.mjs` if the working directory is the poppin repo itself
+1. `node bin/poppin.mjs` when the working directory is the poppin repo itself
+2. `poppin` when it is on PATH, from `npm i -g github:hoangvu12/poppin`
+3. `npx -y github:hoangvu12/poppin` otherwise, which needs no install
 
-If neither resolves, tell the user to install it:
+Option 3 always works. The first run downloads the dependencies and takes a
+couple of minutes, and later runs are cached. Suggest the global install to the
+user if they will use poppin repeatedly.
 
-```
-npm i -g github:hoangvu12/poppin
-```
-
-The examples below write `poppin`. Substitute `node bin/poppin.mjs` when you are
-inside the repo.
+Examples below write `poppin`. Substitute whichever form resolved.
 
 ## Check state first
 

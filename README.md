@@ -25,8 +25,17 @@ Google Chrome.
 
 ## Install
 
+Run it without installing anything:
+
+```bash
+npx -y github:hoangvu12/poppin --help
+```
+
+Install it globally if you will use it more than once:
+
 ```bash
 npm i -g github:hoangvu12/poppin
+poppin --help
 ```
 
 Or clone the repository and run it in place:
@@ -38,13 +47,16 @@ npm install
 node bin/poppin.mjs --help
 ```
 
-To install the agent skill into a project:
+### Agent skill
 
 ```bash
 npx skills add hoangvu12/poppin
 ```
 
-The skill drives the CLI, so install the CLI as well.
+That installs the instructions in `skills/poppin/` for your coding agent. It
+does not install the CLI, because a skill is documentation rather than code. The
+skill falls back to `npx -y github:hoangvu12/poppin`, so it works whether or not
+you installed the CLI first.
 
 ## Sign in
 
