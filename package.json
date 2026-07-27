@@ -1,0 +1,42 @@
+{
+  "name": "poppin-cli",
+  "version": "0.1.0",
+  "description": "A local design-reference library built from your own Mobbin session. Search real app screens and flows from the command line.",
+  "type": "module",
+  "bin": {
+    "poppin": "./bin/poppin.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "skills",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "poppin": "node bin/poppin.mjs"
+  },
+  "keywords": [
+    "design",
+    "ui",
+    "ux",
+    "mobbin",
+    "inspiration",
+    "screenshots",
+    "cli",
+    "agent-skill"
+  ],
+  "author": "hoangvu12",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hoangvu12/poppin.git"
+  },
+  "dependencies": {
+    "commander": "^15.0.0",
+    "playwright-core": "^1.62.0",
+    "sharp": "^0.35.3"
+  }
+}

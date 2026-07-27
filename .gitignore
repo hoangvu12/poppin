@@ -1,0 +1,25 @@
+node_modules/
+*.log
+
+# Library, image cache, and the Chrome profile holding the Mobbin session.
+data/
+.poppin/
+.profile/
+
+# Session material must never be committed.
+cookies.txt
+*.cookies
+.cookies*
+*.tmp
+
+# Throwaway recon and debug artifacts.
+probe*.mjs
+probe*.json
+recon*.mjs
+recon*.json
+debug-*.mjs
+dbg.mjs
+verify-*.mjs
+watermark-check.png
+page.html
+flight.txt
