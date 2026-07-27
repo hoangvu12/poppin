@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// Must come first: modules are evaluated in import order, so this reports an
+// unsupported Node version before the database layer tries to load node:sqlite.
+import '../src/preflight.mjs';
 import { Command } from 'commander';
 import path from 'node:path';
 import { open, stats, reindexAll, DATA_DIR } from '../src/db.mjs';

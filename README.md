@@ -20,8 +20,13 @@ is yours.
 
 ## Requirements
 
-Node 22 or newer, because the CLI uses the built-in `node:sqlite` module, plus
-Google Chrome, which the browser layer drives rather than downloading one.
+Node 22.13 or newer on the v22 line, 23.4 or newer on v23, or any Node 24. The
+library is stored with the built-in `node:sqlite` module, which sat behind the
+`--experimental-sqlite` flag before those versions. poppin checks this on
+startup and tells you if your runtime is too old.
+
+Google Chrome, for the commands that need a browser. poppin drives the Chrome
+you already have instead of downloading its own.
 
 ## Install
 
