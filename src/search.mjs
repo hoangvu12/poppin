@@ -34,10 +34,9 @@ export function queryLadder(query) {
   return [...new Set(ladder)];
 }
 
-// bm25 weights, column order: id, name/title, app_name, description, tags.
+// bm25 weights, column order: id, name, app_name, description, tags.
 // A hit in the screen name matters far more than one buried in a description.
 export const SCREEN_WEIGHTS = '0.0, 12.0, 4.0, 2.0, 6.0';
-export const FLOW_WEIGHTS = '0.0, 12.0, 4.0, 3.0, 6.0';
 
 /** Run each rung of the ladder until one yields results. */
 export function laddered(db, buildSql, query, args = []) {

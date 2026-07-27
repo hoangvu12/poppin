@@ -1,13 +1,13 @@
 ---
 name: poppin
-description: Search a local library of real app UI screens harvested from the user's own Mobbin session. Use when the user wants design or UX inspiration, real-world UI examples, reference screenshots, or wants to see how shipped apps handle a pattern such as onboarding, checkout, paywalls, or empty states. Also handles authenticating poppin with a pasted Mobbin cookie.
+description: Search a local library of real app UI screens harvested from the user's own Mobbin session. Use when the user wants design or UX inspiration, real-world UI examples, reference screenshots, or wants to see how shipped apps present something such as onboarding, paywalls, dashboards, or empty states. Also handles authenticating poppin with a pasted Mobbin cookie.
 ---
 
 # poppin
 
 poppin turns the user's own Mobbin session into a searchable local library of
 real app screens. You drive the CLI and hand the resulting screenshots back to
-the user.
+the user. The screenshots are the deliverable, not the tables.
 
 ## Locating the command
 
@@ -18,20 +18,18 @@ command in this order and use the first that works:
 2. `poppin` when it is on PATH, from `npm i -g github:hoangvu12/poppin`
 3. `npx -y github:hoangvu12/poppin` otherwise, which needs no install
 
-Option 3 always works. The first run downloads the dependencies and takes a
-couple of minutes, and later runs are cached. Suggest the global install to the
-user if they will use poppin repeatedly.
-
-Examples below write `poppin`. Substitute whichever form resolved.
+Option 3 always works. Suggest the global install if the user will run poppin
+repeatedly. Examples below write `poppin`, so substitute whichever form
+resolved.
 
 ## Check state first
 
 ```
 poppin stats     # how many apps and screens are cached
-poppin whoami    # is the Mobbin session still valid
+poppin whoami    # is the stored session still valid
 ```
 
-Cached data needs no session. A session is only required to fetch new content.
+Cached data needs no session. A session is only needed to fetch new content.
 
 ## Authenticating
 
@@ -51,66 +49,50 @@ printf '%s' "<COOKIE>" | poppin import-cookies
 POPPIN_COOKIES="<COOKIE>" poppin import-cookies
 ```
 
-Exit codes: 0 means authenticated, 1 means the cookie was rejected because it
-expired or was pasted partially, 2 means no session cookie was found. Check the
-code and ask the user to re-copy if it failed. Never echo the cookie back to the
-user or into logs.
+Exit codes: 0 authenticated, 1 the cookie was rejected because it expired or was
+pasted partially, 2 no session cookie was found in the input. Check the code and
+ask the user to re-copy if it failed. Never echo the cookie back or into logs.
 
-## Primary path: catalog and find
-
-Signed in, prefer the JSON catalog. It covers the full app library with curated
-keywords and has no per-listing cap.
+## Fetching content
 
 ```
-poppin catalog --platform ios,web          # one time, or to refresh
-poppin find "<query>" --images --json      # search apps by name, tagline, keywords
-poppin app-screens <appId> --images        # deep-fetch one app's screens
+poppin catalog --platform ios          # about 900 apps and 3,500 preview screens
+poppin catalog --platform ios,web      # both platforms
 ```
 
-`find --json` returns each app with `keywords` and a `previews` array. Each
-preview carries a `local_path` once `--images` has run. Read those image files
-and show them to the user. The images are the deliverable, not the table. Take
-the 8-character id from `find` and pass it to `app-screens` for more screens
-from one app.
+Run this once, or again to refresh. Everything else reads the local library.
 
-`app-screens` reads the app's on-page grid, which is virtualised and opens
-screens in modals, so it returns the screens the grid exposes rather than a
-guaranteed complete set. Use `find` previews and `app-screens` together when the
-user wants breadth.
-
-## Fallback path: the anonymous scraper
-
-This works without a session but caps at 60 screens per listing.
+## Finding and returning screens
 
 ```
-poppin taxonomy --kind flows
-poppin sync -p mobile -k screens --slug onboarding -n 40 --details --images
-poppin sync -p mobile -k flows --slug creating-account -n 15 --images
+poppin find "<query>" --images --json   # search apps, cache their previews
+poppin search "<query>" --images --json # search screens already cached
 ```
 
-## Searching cached content
+`find` matches app names, taglines, and Mobbin's curated keywords, so
+conceptual queries work: "meditation calm" returns Calm, Calm Sleep and Tide.
+Each result carries a `previews` array, and each preview has a `local_path` once
+`--images` has run.
 
-```
-poppin search "empty state" --images --json
-poppin search onboarding --flows --json
-poppin flow <id> --json                    # ordered frame sequence
-```
-
-Search JSON includes `local_path` for each cached screenshot. Read those files
-and present the matches with the app name, the screen name, and why each one
-fits what the user asked for.
+**Read those image files and show them to the user.** Present each with the app
+name and why it fits what they asked for. A table of ids is not an answer.
 
 ## Typical task
 
 1. Run `stats`. If the catalog is empty and a session exists, run `catalog`.
 2. Run `find "<what the user wants>" --images --json`.
 3. Read the `local_path` images from the top matches and present them.
-4. If the user wants more from one app, run `app-screens <id> --images`.
-5. For a whole ordered journey such as signup or checkout, use `flow`.
+4. Use `search` instead when the user wants a specific screen already cached
+   rather than a whole app.
 
 ## Scope
 
-poppin reads only what the user's own session is served, rate-limits its
-requests, and does not touch Mobbin's paid MCP endpoint. If the user asks you to
-bypass the paywall, decline and explain that poppin is an unofficial client for
-their own account rather than a circumvention tool.
+poppin covers the app catalog and its preview screens, roughly four per app. It
+does not crawl an app's full screen library and does not capture flows, because
+those need a real browser. If the user asks for those, say so rather than
+implying the library is exhaustive.
+
+poppin reads only what the user's own session is served and does not touch
+Mobbin's paid MCP endpoint. If the user asks you to bypass the paywall, decline
+and explain that poppin is an unofficial client for their own account rather
+than a circumvention tool.

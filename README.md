@@ -1,18 +1,19 @@
 # poppin
 
 A command-line design reference library built from your own Mobbin session.
-Search real app screens, browse whole user flows, and cache the screenshots
-locally so you or a coding agent can look at them.
+Search the app catalog, cache the screenshots locally, and hand them to yourself
+or to a coding agent.
+
+One dependency, no browser, no image processing.
 
 ## What it is
 
-poppin is an unofficial client. You give it your own Mobbin session, and it
-keeps a local cache of what that session is served. It belongs to the same
+poppin is an unofficial client. You give it your own Mobbin session cookie, and
+it keeps a local cache of what that session is served. It belongs to the same
 category as any unofficial client for a service you hold an account with.
 
 It does not circumvent the paywall. It reads only what your own account
-receives, it never touches Mobbin's paid MCP endpoint, and it rate limits its
-requests.
+receives, and it never touches Mobbin's paid MCP endpoint.
 
 Mobbin's terms very likely prohibit automated access even with a valid account.
 That is a terms-of-service risk to your account, and the decision to accept it
@@ -25,8 +26,7 @@ library is stored with the built-in `node:sqlite` module, which sat behind the
 `--experimental-sqlite` flag before those versions. poppin checks this on
 startup and tells you if your runtime is too old.
 
-Google Chrome, for the commands that need a browser. poppin drives the Chrome
-you already have instead of downloading its own.
+Nothing else. No browser, no native modules.
 
 ## Install
 
@@ -68,9 +68,9 @@ you installed the CLI first.
 Sign in once by pasting your session cookie. It persists for later commands.
 
 There is no automated login. Mobbin authenticates through Google, which
-regularly refuses automated browser windows with a "this browser may not be
-secure" error, so an automated flow would be unreliable. Pasting a cookie from a
-browser you already trust works every time and takes about ten seconds.
+regularly refuses automated browser windows, and driving a browser purely to log
+in would pull in a large dependency for one step. Pasting a cookie from a browser
+you already trust takes about ten seconds.
 
 Log into mobbin.com in any browser, open the DevTools console, and run:
 
@@ -90,12 +90,12 @@ A Cookie-Editor JSON export also works. The snippet selects the session cookies
 for you, and they are sometimes split across numbered chunks, so copy every line
 it produces.
 
-`import-cookies` exits 0 when the session works, 1 when the cookie was rejected
-because it expired or was pasted partially, and 2 when the input contained no
-session cookie. Confirm with `poppin whoami`, which exits 1 when signed out.
+`import-cookies` verifies the cookie by making a real request. It exits 0 when
+the session works, 1 when the cookie was rejected, and 2 when the input
+contained no session cookie. Confirm later with `poppin whoami`, which also
+exits 1 when the session has expired.
 
-Any browser works as the source. poppin drives its own Chrome profile and only
-needs the cookie string.
+Any browser works as the source. poppin only needs the cookie string.
 
 ## Quick start
 
@@ -110,119 +110,75 @@ actually want to look at.
 
 ## Commands
 
-### Fetching, signed in
-
 | Command | What it does |
 | --- | --- |
+| `import-cookies` | Store and verify your session |
+| `whoami` | Check whether the stored session still works |
 | `catalog` | Pull the searchable app catalog into the library |
-| `app-screens <id>` | Deep-fetch the screens for one catalog app |
+| `find <query>` | Search the catalog by name, tagline, or keywords |
+| `search <query>` | Search cached screens |
+| `screen <id>` | Show one screen |
+| `app <name>` | Show cached screens for an app |
+| `images` | Download screenshots that are not cached yet |
+| `stats` | What the library holds |
+| `reindex` | Rebuild the full-text index |
+
+### catalog
 
 ```bash
 poppin catalog --platform ios,web        # both platforms
 poppin catalog --platform ios --images   # and cache preview screenshots
-poppin app-screens 63d748eb --images     # id or 8-character prefix from find
+poppin catalog --no-previews             # apps only
 ```
 
-`catalog` accepts `--platform <list>` (default `ios`), `--no-previews` to store
-apps without their preview screens, `--images`, and `--headed` to watch the
-browser.
+One request per platform returns every app with its tagline, curated keywords,
+preview screens, and logo. About 900 apps and 3,500 preview screens for iOS.
 
-`app-screens` reads the app's on-page grid, which is virtualised and opens
-screens in modals, so it returns the screens that grid exposes rather than a
-guaranteed complete set.
-
-### Fetching, without a session
-
-The public browse pages work signed out but stop at 60 screens per listing. This
-path is also the only source of ordered flows.
+### find
 
 ```bash
-poppin taxonomy --kind flows
-poppin sync -p mobile -k screens --slug onboarding -n 40 --details --images
-poppin sync -p mobile -k flows --slug creating-account -n 15 --images
-```
-
-| Flag | Meaning |
-| --- | --- |
-| `-p, --platform` | `mobile` or `web`, default `mobile` |
-| `-k, --kind` | `screens`, `ui-elements`, `flows`, or `all`, default `screens` |
-| `-s, --slug` | sync a single listing, such as `--slug onboarding` |
-| `-n, --limit` | screens per listing, default 40 |
-| `-t, --taxonomy-limit` | listings to crawl per kind, default 12 |
-| `--details` | open each screen page for descriptions and tags |
-| `--images` | download screenshots |
-| `--delay` | milliseconds between page loads, default 1500 |
-| `--headed` | watch the browser work |
-
-`--taxonomy-limit` applies per kind, so `--kind all` does not spend the whole
-budget on whichever kind sorts first.
-
-### Reading the library
-
-None of these need a session or a browser.
-
-```bash
-poppin find budgeting -n 10              # search the catalog by app
-poppin search "empty state" --images     # search cached screens
-poppin search onboarding --flows         # search flows
-poppin search paywall --all              # both
-poppin screen 3d951da4                   # one screen and its tags
-poppin flows onboarding                  # list captured flows
-poppin flow c6d624b6                     # one flow as an ordered sequence
-poppin app Monarch                       # cached screens for an app
-poppin taxonomy --kind flows             # known patterns, elements, flows
-poppin stats                             # what the library holds
+poppin find budgeting -n 10
+poppin find "meditation calm" --images --json
+poppin find wallet --platform ios
 ```
 
 `find` matches app names, taglines, and Mobbin's curated keywords, so
-`poppin find "meditation calm"` returns Calm, Tide, and Ten Percent Happier
-rather than only literal matches. `search` covers screens and flows already in
-the library, with exact multi-term matches ranked above incidental ones.
+`poppin find "meditation calm"` returns Calm, Calm Sleep and Tide rather than
+only literal matches. Each result carries up to four preview screens, and
+`--images` caches them at full resolution.
 
-### Maintenance
+### search
 
 ```bash
-poppin images -n 500      # download screenshots that are not cached yet
-poppin images --force     # re-download even if cached
-poppin reindex            # rebuild the full-text index
+poppin search wallet -n 10
+poppin search "empty state" --images --json
+poppin search dashboard --app Monarch
 ```
+
+`search` covers screens already in the library, ranking exact multi-term matches
+above incidental ones.
 
 ## How it works
 
-Mobbin is a Next.js App Router application on Supabase, and it presents two
-different surfaces.
+Mobbin is a Next.js application on Supabase. Signed in, its search bar downloads
+the whole app catalog as JSON and filters it client side. poppin does the same
+thing: one authenticated request per platform, stored in SQLite, searched
+locally with FTS5.
 
-The public surface at `/explore` is DOM only and caps at 60 screens per listing.
-`sync` scrapes it with `playwright-core` against a persistent Chrome profile.
+That is why there is no browser here. The catalog is a plain JSON endpoint, and
+the session is a cookie, so an HTTP request with the right header is all it
+takes.
 
-The authenticated surface is backed by JSON rather than HTML, so `catalog` and
-`find` read structured records instead of scraping markup. That is why the
-signed-in path has no per-listing cap and carries keywords the public pages
-never expose. The details live in `src/api.mjs`.
+Two details are worth recording because they caused real bugs.
 
-Everything else reads the local SQLite database, with FTS5 for search.
+The image URLs in the catalog are storage keys rather than fetchable addresses,
+and requesting them directly fails. `src/images.mjs` maps each key onto the CDN
+that serves it, asks for webp, and writes the response body straight to disk, so
+nothing is decoded or re-encoded locally.
 
-A few implementation notes, since they explain why the code looks the way it
-does.
-
-Image URLs returned by the data layer are storage keys rather than fetchable
-addresses, so `src/images.mjs` maps them onto the CDN that serves them before
-caching anything.
-
-Image URLs on the public surface carry a signed transform token, so the width
-cannot be changed by editing the query string. The rendered `src` is often a
-thumbnail while `srcset` advertises the original, and the scraper takes the
-widest `srcset` candidate.
-
-The "Explore similar screens" section on a screen page holds full-size
-screenshots and tag links belonging to other screens. Without a
-`compareDocumentPosition` guard, the scraper attributes a neighbour's screenshot
-to the current screen.
-
-Flow pages are not screen pages. They render no screen cards at all. They render
-whole flows as `<article>` elements, each an ordered run of frames, and the app
-name, title, and description come from the article's text block rather than from
-image alt text.
+An expired or malformed session does not produce a 401. The endpoint answers 200
+with an almost empty body, so success is judged by the payload rather than the
+status code. That is what `whoami` and `import-cookies` check.
 
 ## Agent use
 
@@ -232,8 +188,7 @@ images.
 
 ```bash
 poppin find "empty state" --images --json
-poppin search onboarding --flows --json
-poppin flow c6d624b6 --json
+poppin search onboarding --json
 ```
 
 Progress messages go to stderr when `--json` is set, so stdout stays parseable.
@@ -247,43 +202,36 @@ shell history.
 
 ```
 bin/poppin.mjs        CLI entry point
-src/config.mjs        constants shared by the light and browser paths
+src/preflight.mjs     runtime version check
+src/config.mjs        shared constants
+src/session.mjs       stored session and authenticated requests
+src/cookies.mjs       cookie parsing
 src/db.mjs            SQLite schema and FTS index
 src/search.mjs        FTS query building and ranking
+src/harvest-api.mjs   catalog normalising, storage, and image caching
 src/images.mjs        image cache and CDN URL mapping
-src/cookies.mjs       cookie parsing and session import
-src/api.mjs           authenticated data access
-src/harvest-api.mjs   catalog sync and per-app fetch
-src/browser.mjs       persistent Chrome profile
-src/extract.mjs       DOM extractors for the public browse pages
-src/harvest.mjs       crawl orchestration for those pages
 skills/poppin/        agent skill
 ```
 
-Browser modules load on demand, so commands that only read the local library
-never import playwright and start immediately.
+## Scope
 
-## Dependencies
+poppin covers the app catalog and its preview screens, which is roughly four
+screens per app.
 
-Two, on purpose.
-
-`commander` parses arguments. `playwright-core` drives the browser, and it uses
-the Chrome you already have rather than downloading its own, which is why it
-costs about 13 MB rather than several hundred.
-
-There is no image processing dependency. The CDN is asked for webp and the
-response body is written straight to disk, so nothing is decoded or re-encoded
-locally.
+It does not crawl a whole app's screen library, and it does not capture flows.
+Both live behind a virtualised grid that only renders what is on screen, so
+reading them needs a real browser. That was worth about 13 MB of dependency for
+four screens per app, which is what the catalog already provides, so it was
+removed. The git history has the browser-based version if you want it back.
 
 ## Data and privacy
 
 The library lives in `POPPIN_DATA` when that is set, otherwise in `./data` when
 that directory already exists, otherwise in `~/.poppin`. It holds the SQLite
-database, the image cache, and the Chrome profile.
+database, the image cache, and `session.json`.
 
-The Chrome profile contains your Mobbin session, so treat that directory as a
-credential. It is excluded from git, and no cookie value is written to the
-repository.
+`session.json` contains your Mobbin session, so treat it as a credential. It is
+excluded from git, and no cookie value is written to the repository.
 
 ## License
 

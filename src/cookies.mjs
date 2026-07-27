@@ -41,8 +41,8 @@ export function parseCookies(raw) {
 function cookie(name, value, domain, path, expires) {
   // The Supabase auth cookie is host-only on mobbin.com (not .mobbin.com).
   const host = (domain || 'mobbin.com').replace(/^\./, '');
-  // Keep the value verbatim: document.cookie / the Cookie header already carry
-  // the URL-encoded form, which is exactly what Playwright re-sends.
+  // Keep the value verbatim. document.cookie and the Cookie header already
+  // carry the URL-encoded form, which is exactly what gets sent back.
   return {
     name,
     value: value ?? '',
