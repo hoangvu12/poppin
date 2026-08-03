@@ -1,32 +1,29 @@
 # poppin
 
-A command-line design reference library built from your own Mobbin session.
-Search the app catalog, cache the screenshots locally, and hand them to yourself
-or to a coding agent.
+Search real app UI screens from the command line and hand the screenshots to
+yourself or to a coding agent.
 
-One dependency, no browser, no image processing.
+One dependency, no account, no browser, no database.
 
 ## What it is
 
-poppin is an unofficial client. You give it your own Mobbin session cookie, and
-it keeps a local cache of what that session is served. It belongs to the same
-category as any unofficial client for a service you hold an account with.
+poppin is a thin client for [nibbom](https://nibbom.nguyenvu.dev), a hosted
+proxy that already carries a Mobbin session and answers Mobbin's data endpoints.
+poppin holds no credential of its own: there is nothing to sign into, nothing
+stored on disk, and no cookie for you or an agent to handle.
 
-It does not circumvent the paywall. It reads only what your own account
-receives, and it never touches Mobbin's paid MCP endpoint.
+Every command asks nibbom for the live catalog and ranks it in memory, so
+results are never stale. Screenshots are downloaded to the system temp
+directory as working files, not kept in a library.
 
-Mobbin's terms very likely prohibit automated access even with a valid account.
-That is a terms-of-service risk to your account, and the decision to accept it
-is yours.
+It does not circumvent a paywall — it reads what the upstream serves. Mobbin's
+terms restrict automated access and redistribution of its content; how you use
+what comes back is your call.
 
 ## Requirements
 
-Node 22.13 or newer on the v22 line, 23.4 or newer on v23, or any Node 24. The
-library is stored with the built-in `node:sqlite` module, which sat behind the
-`--experimental-sqlite` flag before those versions. poppin checks this on
-startup and tells you if your runtime is too old.
-
-Nothing else. No browser, no native modules.
+Node 20 or newer. Nothing else — no native modules, no browser, no local
+database.
 
 ## Install
 
@@ -63,176 +60,103 @@ does not install the CLI, because a skill is documentation rather than code. The
 skill falls back to `npx -y github:hoangvu12/poppin`, so it works whether or not
 you installed the CLI first.
 
-## Sign in
-
-Sign in once by pasting your session cookie. It persists for later commands.
-
-There is no automated login. Mobbin authenticates through Google, which
-regularly refuses automated browser windows, and driving a browser purely to log
-in would pull in a large dependency for one step. Pasting a cookie from a browser
-you already trust takes about ten seconds.
-
-Log into mobbin.com in any browser, open the DevTools console, and run:
-
-```js
-copy(document.cookie.split('; ').filter(c => c.startsWith('sb-')).join('\n'))
-```
-
-Then hand it to poppin. No file is required:
-
-```bash
-poppin import-cookies                        # paste, then Ctrl+Z Enter on Windows, Ctrl+D elsewhere
-poppin import-cookies < cookies.txt          # from a file
-POPPIN_COOKIES="..." poppin import-cookies   # from the environment
-```
-
-A Cookie-Editor JSON export also works. The snippet selects the session cookies
-for you, and they are sometimes split across numbered chunks, so copy every line
-it produces.
-
-`import-cookies` verifies the cookie by making a real request. It exits 0 when
-the session works, 1 when the cookie was rejected, and 2 when the input
-contained no session cookie. Confirm later with `poppin whoami`, which also
-exits 1 when the session has expired.
-
-Any browser works as the source. poppin only needs the cookie string.
-
-## Quick start
-
-```bash
-poppin import-cookies              # paste your cookie
-poppin catalog --platform ios      # pull the app catalog, about 900 apps
-poppin find budgeting --images     # search it and cache the screenshots
-```
-
-`find` prints a local file path for each preview, which is the thing you
-actually want to look at.
-
 ## Commands
-
-| Command | What it does |
-| --- | --- |
-| `import-cookies` | Store and verify your session |
-| `whoami` | Check whether the stored session still works |
-| `catalog` | Pull the searchable app catalog into the library |
-| `find <query>` | Search the catalog by name, tagline, or keywords |
-| `search <query>` | Search cached screens |
-| `screen <id>` | Show one screen |
-| `app <name>` | Show cached screens for an app |
-| `images` | Download screenshots that are not cached yet |
-| `stats` | What the library holds |
-| `reindex` | Rebuild the full-text index |
-
-### catalog
-
-```bash
-poppin catalog --platform ios,web        # both platforms
-poppin catalog --platform ios --images   # and cache preview screenshots
-poppin catalog --no-previews             # apps only
-```
-
-One request per platform returns every app with its tagline, curated keywords,
-preview screens, and logo. About 900 apps and 3,500 preview screens for iOS.
 
 ### find
 
+Search apps by name, tagline, and Mobbin's curated keywords, and get their
+preview screens.
+
 ```bash
-poppin find budgeting -n 10
-poppin find "meditation calm" --images --json
-poppin find wallet --platform ios
+poppin find "meditation calm sleep"
+poppin find "issue tracking" --platform web
+poppin find "onboarding" --images --json
 ```
 
-`find` matches app names, taglines, and Mobbin's curated keywords, so
-`poppin find "meditation calm"` returns Calm, Calm Sleep and Tide rather than
-only literal matches. Each result carries up to four preview screens, and
-`--images` caches them at full resolution.
+Conceptual queries work because the curated keywords are searched too:
+"meditation calm sleep" returns Calm, Calm Sleep, Endel, and Ten Percent
+Happier. Apps matching every term in the query always rank above apps that
+matched only one.
 
 ### search
 
-```bash
-poppin search wallet -n 10
-poppin search "empty state" --images --json
-poppin search dashboard --app Monarch
-```
-
-`search` covers screens already in the library, ranking exact multi-term matches
-above incidental ones.
-
-## How it works
-
-Mobbin is a Next.js application on Supabase. Signed in, its search bar downloads
-the whole app catalog as JSON and filters it client side. poppin does the same
-thing: one authenticated request per platform, stored in SQLite, searched
-locally with FTS5.
-
-That is why there is no browser here. The catalog is a plain JSON endpoint, and
-the session is a cookie, so an HTTP request with the right header is all it
-takes.
-
-Two details are worth recording because they caused real bugs.
-
-The image URLs in the catalog are storage keys rather than fetchable addresses,
-and requesting them directly fails. `src/images.mjs` maps each key onto the CDN
-that serves it, asks for webp, and writes the response body straight to disk, so
-nothing is decoded or re-encoded locally.
-
-An expired or malformed session does not produce a 401. The endpoint answers 200
-with an almost empty body, so success is judged by the payload rather than the
-status code. That is what `whoami` and `import-cookies` check.
-
-## Agent use
-
-Every read command accepts `--json`, and results carry `local_path` pointing at
-a cached screenshot, so an agent can search the library and then read the actual
-images.
+The same ranking, flattened into screen rows instead of apps.
 
 ```bash
-poppin find "empty state" --images --json
-poppin search onboarding --json
+poppin search "project management" --platform web
+poppin search "checkout" --app stripe --images
 ```
 
-Progress messages go to stderr when `--json` is set, so stdout stays parseable.
+### app
 
-The skill in `skills/poppin/` documents the workflow, including how to accept a
-cookie from the user through stdin or the environment rather than through a
-command-line argument, which would leak the session into process listings and
-shell history.
+Every preview screen for one app, matched by substring.
 
-## Layout
-
+```bash
+poppin app duolingo --images
 ```
-bin/poppin.mjs        CLI entry point
-src/preflight.mjs     runtime version check
-src/config.mjs        shared constants
-src/session.mjs       stored session and authenticated requests
-src/cookies.mjs       cookie parsing
-src/db.mjs            SQLite schema and FTS index
-src/search.mjs        FTS query building and ranking
-src/harvest-api.mjs   catalog normalising, storage, and image caching
-src/images.mjs        image cache and CDN URL mapping
-skills/poppin/        agent skill
+
+### screen
+
+One screen by id or id prefix. This one downloads the image by default, since
+asking for a single screen usually means you want to look at it.
+
+```bash
+poppin screen 2729b66d
+poppin screen 2729b66d --no-images --json
 ```
+
+### stats
+
+What the upstream currently holds, and where images are written.
+
+```bash
+poppin stats
+```
+
+## Options
+
+| Option | Applies to | Meaning |
+| --- | --- | --- |
+| `-n, --limit <n>` | `find`, `search` | Maximum results |
+| `-p, --platform <list>` | all | `ios`, `web`, or `ios,web`. Defaults to `ios`, except `screen` and `stats` which check both |
+| `--app <name>` | `search` | Restrict to apps whose name contains this |
+| `--images` | `find`, `search`, `app` | Download the screenshots |
+| `--no-images` | `screen` | Skip the download |
+| `--json` | all | Machine-readable output |
+
+Under `--json`, progress messages go to stderr so stdout stays parseable.
+
+## Screenshots
+
+Images are written to `poppin-screens` inside the system temp directory
+(`%TEMP%` on Windows, `/tmp` on Linux and macOS) and named by screen id. A file
+that is already there is reused rather than downloaded again, and the OS clears
+it out on its own schedule. Set `POPPIN_IMAGE_DIR` to put them somewhere else.
+
+The `path` field of every result is `null` until the image has been downloaded.
+
+## Environment
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `POPPIN_BASE` | `https://nibbom.nguyenvu.dev` | Upstream to query |
+| `POPPIN_IMAGE_DIR` | `<tmp>/poppin-screens` | Where screenshots are written |
 
 ## Scope
 
-poppin covers the app catalog and its preview screens, which is roughly four
-screens per app.
+poppin covers the app catalog and its preview screens, roughly four per app. It
+does not crawl an app's full screen library and does not capture flows: the
+upstream endpoint it reads does not carry them.
 
-It does not crawl a whole app's screen library, and it does not capture flows.
-Both live behind a virtualised grid that only renders what is on screen, so
-reading them needs a real browser. That was worth about 13 MB of dependency for
-four screens per app, which is what the catalog already provides, so it was
-removed. The git history has the browser-based version if you want it back.
+Each command fetches the catalog fresh (about 1.8 MB for iOS, 950 KB for web),
+which takes a couple of seconds. That is the deliberate trade for holding no
+local state.
 
-## Data and privacy
+## Development
 
-The library lives in `POPPIN_DATA` when that is set, otherwise in `./data` when
-that directory already exists, otherwise in `~/.poppin`. It holds the SQLite
-database, the image cache, and `session.json`.
+```bash
+npm test
+```
 
-`session.json` contains your Mobbin session, so treat it as a credential. It is
-excluded from git, and no cookie value is written to the repository.
-
-## License
-
-MIT
+The tests run against a stub server on localhost, so the suite needs no network
+and no credential.

@@ -1,98 +1,97 @@
 ---
 name: poppin
-description: Search a local library of real app UI screens harvested from the user's own Mobbin session. Use when the user wants design or UX inspiration, real-world UI examples, reference screenshots, or wants to see how shipped apps present something such as onboarding, paywalls, dashboards, or empty states. Also handles authenticating poppin with a pasted Mobbin cookie.
+description: Search a catalog of screens from real shipped apps and return the screenshots. Use when the user wants design or UX inspiration, real-world UI examples, reference screenshots, or wants to see how shipped products handle something such as onboarding, paywalls, dashboards, settings, or empty states — including when they describe the need without naming a source, as in "what does good onboarding look like" or "show me some pricing pages". Do NOT use this skill to critique, design, theme, or implement the user's own interface; it only retrieves examples of what other apps shipped, and adjacent design skills own the work of improving the user's own UI.
+license: MIT
+compatibility: Requires Node 20+ and outbound network access to nibbom.nguyenvu.dev and bytescale.mobbin.com. Writes screenshots to the system temp directory.
 ---
 
 # poppin
 
-poppin turns the user's own Mobbin session into a searchable local library of
-real app screens. You drive the CLI and hand the resulting screenshots back to
-the user. The screenshots are the deliverable, not the tables.
+poppin searches a catalog of screens from real shipped apps and downloads the
+screenshots. You drive the CLI and hand the resulting images back to the user.
+The screenshots are the deliverable, not the tables.
 
-## Locating the command
+There is no sign-in. Never ask the user for a Mobbin account, cookie, or API
+key — the upstream carries its own session, so a failing command is a network
+or upstream problem, never a missing credential.
 
-Installing this skill copies these instructions only, not the CLI. Resolve the
-command in this order and use the first that works:
-
-1. `node bin/poppin.mjs` when the working directory is the poppin repo itself
-2. `poppin` when it is on PATH, from `npm i -g github:hoangvu12/poppin`
-3. `npx -y github:hoangvu12/poppin` otherwise, which needs no install
-
-Option 3 always works. Suggest the global install if the user will run poppin
-repeatedly. Examples below write `poppin`, so substitute whichever form
-resolved.
-
-## Check state first
+## Running it
 
 ```
-poppin stats     # how many apps and screens are cached
-poppin whoami    # is the stored session still valid
+npx -y github:hoangvu12/poppin find "<query>" --images --json
 ```
 
-Cached data needs no session. A session is only needed to fetch new content.
-
-## Authenticating
-
-The user logs into mobbin.com in any browser and copies their session cookie
-from the DevTools console:
-
-```js
-copy(document.cookie.split('; ').filter(c => c.startsWith('sb-')).join('\n'))
-```
-
-When the user gives you that string, authenticate without putting the secret in
-a command-line argument, because arguments leak into process listings and shell
-history. Pipe it through stdin or pass it in an environment variable:
-
-```
-printf '%s' "<COOKIE>" | poppin import-cookies
-POPPIN_COOKIES="<COOKIE>" poppin import-cookies
-```
-
-Exit codes: 0 authenticated, 1 the cookie was rejected because it expired or was
-pasted partially, 2 no session cookie was found in the input. Check the code and
-ask the user to re-copy if it failed. Never echo the cookie back or into logs.
-
-## Fetching content
-
-```
-poppin catalog --platform ios          # about 900 apps and 3,500 preview screens
-poppin catalog --platform ios,web      # both platforms
-```
-
-Run this once, or again to refresh. Everything else reads the local library.
+That works with nothing installed. If `poppin` is already on PATH, or the
+working directory is the poppin repo itself, use `poppin` or
+`node bin/poppin.mjs` instead to skip the download. Examples below write
+`poppin` for brevity.
 
 ## Finding and returning screens
 
+`find` is the command for almost every request. It matches app names,
+taglines, and curated keywords, so conceptual queries work: "meditation calm
+sleep" returns Calm, Calm Sleep, Endel, and Ten Percent Happier.
+
 ```
-poppin find "<query>" --images --json   # search apps, cache their previews
-poppin search "<query>" --images --json # search screens already cached
+poppin find "<query>" --images --json
 ```
 
-`find` matches app names, taglines, and Mobbin's curated keywords, so
-conceptual queries work: "meditation calm" returns Calm, Calm Sleep and Tide.
-Each result carries a `previews` array, and each preview has a `local_path` once
-`--images` has run.
+Each result is an app carrying a `previews` array of screens, and each screen
+has a `path` once `--images` has run:
+
+```json
+[
+  {
+    "appName": "Calm",
+    "tagline": "Sleep, meditation, relaxation",
+    "platform": "ios",
+    "keywords": ["meditation", "relaxation", "sleep aid"],
+    "previews": [{ "id": "2729b66d-...", "path": "/tmp/poppin-screens/2729b66d-....webp" }]
+  }
+]
+```
 
 **Read those image files and show them to the user.** Present each with the app
 name and why it fits what they asked for. A table of ids is not an answer.
 
-## Typical task
+Without `--images` every `path` is `null` and nothing has been downloaded, so
+pass `--images` whenever you intend to show something.
 
-1. Run `stats`. If the catalog is empty and a session exists, run `catalog`.
-2. Run `find "<what the user wants>" --images --json`.
-3. Read the `local_path` images from the top matches and present them.
-4. Use `search` instead when the user wants a specific screen already cached
-   rather than a whole app.
+## Other commands
+
+```
+poppin find "<query>" --platform web --json    # web apps instead of iOS
+poppin search "<query>" --images --json        # screens directly, not grouped by app
+poppin app "<name>" --images --json            # every screen for one app
+poppin screen <id> --json                      # one screen, downloaded by default
+poppin stats                                   # catalog size and image directory
+```
+
+Prefer `find` when the user names a kind of app or a design problem, and
+`search` when they want individual screens across many apps. `--platform`
+takes `ios`, `web`, or `ios,web` and defaults to `ios`; use `web` for web
+apps, dashboards, and SaaS interfaces, and `ios,web` when they have not said.
+
+## Screenshots
+
+Images land in `poppin-screens` inside the system temp directory, named by
+screen id, and are reused within a session rather than downloaded twice.
+Treat them as working files: the OS clears them on its own schedule, so do not
+promise the user a permanent library. `POPPIN_IMAGE_DIR` can redirect them into
+a project, but do not do that unasked — it turns a temp file into a committed
+asset, and the upstream's terms restrict redistributing this content.
+
+## Cost
+
+Every command fetches the live catalog, which takes a couple of seconds. One
+`find` with a good query and a sensible `-n` beats several narrow ones. Skip
+`--images` only when you truly do not need the pictures — a result without them
+is just ids, which is rarely what the user wanted.
 
 ## Scope
 
-poppin covers the app catalog and its preview screens, roughly four per app. It
-does not crawl an app's full screen library and does not capture flows, because
-those need a real browser. If the user asks for those, say so rather than
-implying the library is exhaustive.
-
-poppin reads only what the user's own session is served and does not touch
-Mobbin's paid MCP endpoint. If the user asks you to bypass the paywall, decline
-and explain that poppin is an unofficial client for their own account rather
-than a circumvention tool.
+poppin covers the app catalog and its preview screens, roughly four per app.
+It does not crawl an app's full screen library and does not capture flows. Run
+`poppin stats` for the current catalog size rather than quoting a figure from
+memory. If the user asks for flows or exhaustive coverage, say so rather than
+implying the catalog is complete.

@@ -1,7 +1,7 @@
 {
   "name": "poppin-cli",
-  "version": "0.1.0",
-  "description": "A local design-reference library built from your own Mobbin session. Search real app screens and flows from the command line.",
+  "version": "0.3.0",
+  "description": "Search real app UI screens from the command line. No account, no database, no local library.",
   "type": "module",
   "bin": {
     "poppin": "./bin/poppin.mjs"
@@ -10,13 +10,15 @@
     "bin",
     "src",
     "skills",
+    "docs",
     "README.md"
   ],
   "engines": {
-    "node": ">=22.13.0 <23.0.0 || >=23.4.0"
+    "node": ">=20.0.0"
   },
   "scripts": {
-    "poppin": "node bin/poppin.mjs"
+    "poppin": "node bin/poppin.mjs",
+    "test": "node --test"
   },
   "keywords": [
     "design",

@@ -1,12 +1,10 @@
 node_modules/
 *.log
 
-# Library, image cache, and the Chrome profile holding the Mobbin session.
+# Leftovers from the old local-library and session design.
 data/
 .poppin/
 .profile/
-
-# Session material must never be committed.
 cookies.txt
 *.cookies
 .cookies*
