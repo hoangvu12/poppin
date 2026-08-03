@@ -10,7 +10,6 @@
     "bin",
     "src",
     "skills",
-    "docs",
     "README.md"
   ],
   "engines": {
