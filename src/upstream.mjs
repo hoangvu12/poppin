@@ -34,7 +34,11 @@ export async function postJson(path, body = {}, { timeout = REQUEST_TIMEOUT_MS }
   if (response.status === 429) throw upstreamError('RATE_LIMITED', 'the upstream rate-limited the request');
   if (!response.ok) throw upstreamError('UPSTREAM_ERROR', `the upstream returned HTTP ${response.status}`);
 
-  const text = await response.text();
+  return readEnvelope(await response.text());
+}
+
+/** Unwrap `{ value }` / `{ error }`, translating both into one vocabulary. */
+function readEnvelope(text) {
   // A malformed query is not answered with a status code: the upstream drops
   // the request and closes with an empty 200. Treating that as a client-side
   // bug is the only reading that does not silently look like "no results".
@@ -53,6 +57,26 @@ export async function postJson(path, body = {}, { timeout = REQUEST_TIMEOUT_MS }
     throw upstreamError('UPSTREAM_ERROR', `the upstream refused the request: ${message}`);
   }
   return payload?.value === undefined ? payload : payload.value;
+}
+
+/**
+ * The one upstream endpoint that answers a GET. Same envelope, same error
+ * vocabulary; only the method differs, so the reading is shared.
+ */
+export async function getJson(path, { timeout = REQUEST_TIMEOUT_MS } = {}) {
+  let response;
+  try {
+    response = await fetch(new URL(path, BASE), {
+      signal: AbortSignal.timeout(timeout),
+      headers: CLIENT_HEADERS,
+    });
+  } catch (error) {
+    if (['TimeoutError', 'AbortError'].includes(error.name)) throw error;
+    throw upstreamError('UPSTREAM_UNAVAILABLE', `${BASE} could not be reached`);
+  }
+  if (response.status === 429) throw upstreamError('RATE_LIMITED', 'the upstream rate-limited the request');
+  if (!response.ok) throw upstreamError('UPSTREAM_ERROR', `the upstream returned HTTP ${response.status}`);
+  return readEnvelope(await response.text());
 }
 
 /**

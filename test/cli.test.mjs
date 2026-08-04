@@ -123,6 +123,20 @@ const APP_LIBRARY = {
   ],
 };
 
+/**
+ * Mobbin nests tag records two levels deep and groups them by a category slug
+ * rather than splitting them into separate fields.
+ */
+const dictTag = (displayName, slug) => ({
+  dictionary_entries: {
+    displayName,
+    dictionary_sub_categories: { dictionary_categories: { slug } },
+  },
+});
+
+/** Mutable so a test can give the account a collection without a live one. */
+let collections = [];
+
 const imageDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poppin-cli-test-'));
 const cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'poppin-cache-test-'));
 let server;
@@ -244,6 +258,86 @@ before(async () => {
           screenCdnImgSources: { src: 'https://bytescale.mobbin.com/FW25bBB/image/mobbin.com/prod/s.webp' },
           fullpageScreenCdnImgSources: null,
           animationCdnVideoSources: { source: { url: 'https://bytescale.mobbin.com/FW25bBB/video/mobbin.com/prod/anim.mp4' } },
+        });
+      }
+
+      if (url === '/api/flow/fetch-flow-info') {
+        if (body.flowId !== 'flow-0001') return send(null);
+        return send({
+          id: 'flow-0001',
+          name: 'Onboarding',
+          content_dictionary_tags: [dictTag('Onboarding', 'flowActions')],
+          appVersion: { app: { appName: 'Calm', platform: 'ios' } },
+          // Frames arrive already ordered, with no order field to sort on, and
+          // carry the storage URL rather than the expiring signed CDN source.
+          appSectionScreens: [
+            { appScreen: { id: 'frame-a', screenUrl: 'https://example.test/content/app_screens/a.png', content_dictionary_tags: [dictTag('Logo', 'screenElements')] } },
+            { appScreen: { id: 'frame-b', screenUrl: 'https://example.test/content/app_screens/b.png', content_dictionary_tags: [dictTag('Button', 'screenElements'), dictTag('Signup', 'screenPatterns')] } },
+          ],
+        });
+      }
+
+      if (url === '/api/search-bar/fetch-trending-content') {
+        const platform = (experience) => ({
+          apps: [{ id: 'app-calm', appName: 'Calm', platform: 'ios', trending_metric: 900 }],
+          filterTags: [
+            { order: 2, cardType: 'default', filterTag: { id: 'tag-signup', categorySlug: 'screenPatterns', categoryExperience: experience, subCategory: 'New User Experience', displayName: 'Signup' } },
+            { order: 1, cardType: 'default', filterTag: { id: 'tag-onboarding', categorySlug: 'flowActions', categoryExperience: experience, subCategory: 'New User Experience', displayName: 'Onboarding' } },
+          ],
+          textInScreenshotKeywords: ['Forgot Password'],
+        });
+        return send({
+          ios: platform('mobile'),
+          web: platform('web'),
+          sites: {
+            sites: [{ id: 'site-0001', name: 'Linear', trending_metric: 250 }],
+            filterTags: [{ order: 1, filterTag: { id: 'tag-dark', categorySlug: 'styles', displayName: 'Dark' } }],
+          },
+        });
+      }
+
+      if (url === '/api/popular-apps/fetch-popular-apps-with-preview-screens') {
+        const app = (id, name) => ({
+          app_id: id,
+          app_name: name,
+          app_logo_url: `https://example.test/content/app_logos/${id}.webp`,
+          preview_screens: [{ id: `${id}-p1`, screenUrl: `https://example.test/content/app_screens/${id}.png` }],
+        });
+        return send({
+          finance: [app('app-monzo', 'Monzo'), app('app-wise', 'Wise')].slice(0, body.limitPerCategory),
+          'health & fitness': [app('app-calm', 'Calm')].slice(0, body.limitPerCategory),
+        });
+      }
+
+      if (url === '/api/content/fetch-total-screens-count') return send(633053);
+
+      if (url === '/api/search-bar/fetch-searchable-sites') {
+        return send([
+          { id: 'site-0001', name: 'Linear', tagline: 'Issue tracking you will enjoy', keywords: ['project management', 'issue tracking'], logoCdnImgSources: { src: 'https://example.test/logo.webp' } },
+          { id: 'site-0002', name: 'Stripe', tagline: 'Payments infrastructure', keywords: ['payments', 'api'] },
+        ]);
+      }
+
+      if (url === '/api/collection/fetch-collections') {
+        return send(collections);
+      }
+
+      if (url === '/api/saved/fetch-saved-contents') {
+        // An empty id list is a rejected request, not an empty answer.
+        if (!body.contentIds?.length) {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          return response.end('');
+        }
+        return send(body.contentIds.includes('sign-0001') ? [{ contentId: 'sign-0001' }] : []);
+      }
+
+      if (url === '/api/recent-searches') {
+        return send({
+          apps: {
+            ios: [{ id: 'r1', platform: 'ios', experience: 'apps', textQuery: 'expense tracker', textQueryMethod: 'Free Text' }],
+            web: [{ id: 'r2', platform: 'web', experience: 'apps', app: { id: 'app-linear', appName: 'Linear' } }],
+          },
+          sites: [{ id: 'r3', experience: 'sites', textQuery: 'brutalist', textQueryMethod: 'Free Text' }],
         });
       }
 
@@ -769,6 +863,188 @@ test('the local vocabulary is preferred, so a known term costs no round trip', a
   const result = await run(['search', 'upgrade', '--json']);
   assert.equal(result.status, 0);
   assert.equal(seen.counts['/api/search-bar/search'], undefined);
+});
+
+// ------------------------------------------------------------------- flow
+test('flow resolves one flow by id, in order, with its frames', async () => {
+  const result = await run(['flow', 'flow-0001', '--json']);
+  assert.equal(result.status, 0);
+  const flow = JSON.parse(result.stdout);
+  assert.equal(flow.appName, 'Calm');
+  assert.equal(flow.actions[0], 'Onboarding');
+  assert.equal(flow.screenCount, 2);
+  assert.deepEqual(flow.screens.map(frame => frame.screenId), ['frame-a', 'frame-b']);
+});
+
+test('flow frames are addressed by position, so a repeated screen stays distinct', async () => {
+  const flow = JSON.parse((await run(['flow', 'flow-0001', '--json'])).stdout);
+  assert.deepEqual(flow.screens.map(frame => frame.id), ['flow-flow-0001-001', 'flow-flow-0001-002']);
+  assert.deepEqual(flow.screens.map(frame => frame.order), [1, 2]);
+});
+
+test('flow keeps only the element tags, not every dictionary the screen carries', async () => {
+  const flow = JSON.parse((await run(['flow', 'flow-0001', '--json'])).stdout);
+  // The second frame is tagged Button (an element) and Signup (a pattern).
+  assert.deepEqual(flow.screens[1].elements, ['Button']);
+});
+
+test('flow prefers the storage url, which does not expire', async () => {
+  const flow = JSON.parse((await run(['flow', 'flow-0001', '--json'])).stdout);
+  assert.match(flow.screens[0].url, /example\.test\/content\/app_screens/);
+});
+
+test('flow explains a shortened id rather than reporting a bare miss', async () => {
+  const result = await run(['flow', 'flow-000']);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /shortened id/);
+  assert.match(result.stdout, /poppin flows --json/);
+});
+
+// -------------------------------------------------------------- discovery
+test('trending names the option each promoted filter can be passed to', async () => {
+  const result = await run(['trending', '--json']);
+  assert.equal(result.status, 0);
+  const [ios] = JSON.parse(result.stdout);
+  assert.equal(ios.platform, 'ios');
+  assert.deepEqual(ios.filterTags.map(tag => [tag.name, tag.option]), [
+    ['Onboarding', 'action'],
+    ['Signup', 'pattern'],
+  ]);
+});
+
+test('trending returns promoted filters in the order the upstream ranked them', async () => {
+  const [ios] = JSON.parse((await run(['trending', '--json'])).stdout);
+  // The stub lists Signup (order 2) before Onboarding (order 1) on purpose.
+  assert.deepEqual(ios.filterTags.map(tag => tag.name), ['Onboarding', 'Signup']);
+});
+
+test('trending reads sites, which have their own trending set', async () => {
+  const [sites] = JSON.parse((await run(['trending', '-p', 'sites', '--json'])).stdout);
+  assert.equal(sites.platform, 'sites');
+  assert.equal(sites.apps[0].name, 'Linear');
+  assert.equal(sites.filterTags[0].name, 'Dark');
+});
+
+test('a trending filter name is directly usable as a search filter', async () => {
+  const [ios] = JSON.parse((await run(['trending', '--json'])).stdout);
+  const pattern = ios.filterTags.find(tag => tag.option === 'pattern');
+  const result = await run(['search', '--pattern', pattern.name, '--json']);
+  assert.equal(result.status, 0);
+  assert.ok(JSON.parse(result.stdout).length);
+});
+
+test('popular groups apps by category with their previews', async () => {
+  const result = await run(['popular', '--json']);
+  assert.equal(result.status, 0);
+  const groups = JSON.parse(result.stdout);
+  assert.deepEqual(groups.map(group => group.category), ['finance', 'health & fitness']);
+  assert.equal(groups[0].apps[0].appName, 'Monzo');
+  assert.equal(groups[0].apps[0].previews.length, 1);
+});
+
+test('popular narrows to a category by substring', async () => {
+  const groups = JSON.parse((await run(['popular', '--category', 'health', '--json'])).stdout);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].apps[0].appName, 'Calm');
+});
+
+test('popular lists the real categories when none matched', async () => {
+  const result = await run(['popular', '--category', 'nonsense']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /finance/);
+});
+
+test('popular asks the upstream for only as many apps per category as wanted', async () => {
+  await run(['popular', '-n', '1', '--json']);
+  assert.equal(seen.bodies['/api/popular-apps/fetch-popular-apps-with-preview-screens'].limitPerCategory, 1);
+});
+
+test('popular still answers when a preview cannot be downloaded', async () => {
+  // Image sources are allowlisted to Mobbin's own hosts, so the stub's URLs are
+  // unfetchable by design. One dead preview must not sink the command.
+  const result = await run(['popular', '--category', 'health', '--images', '--json']);
+  assert.equal(result.status, 0);
+  const groups = JSON.parse(result.stdout);
+  assert.equal(groups[0].apps[0].previews[0].path, null);
+});
+
+// ------------------------------------------------------- sites as a corpus
+test('find searches the sites index when asked for the sites platform', async () => {
+  const result = await run(['find', 'issue tracking', '-p', 'sites', '--json']);
+  assert.equal(result.status, 0);
+  const [site] = JSON.parse(result.stdout);
+  assert.equal(site.appName, 'Linear');
+  assert.equal(site.platform, 'sites');
+});
+
+test('find ranks sites on their curated keywords, not just the name', async () => {
+  const results = JSON.parse((await run(['find', 'payments api', '-p', 'sites', '--json'])).stdout);
+  assert.equal(results[0].appName, 'Stripe');
+});
+
+test('find refuses an app category against the sites index', async () => {
+  const result = await run(['find', 'linear', '-p', 'sites', '--category', 'Finance']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /poppin sites --category/);
+});
+
+// --------------------------------------------------------- account state
+test('collections reports an empty library as curation, not as failure', async () => {
+  const result = await run(['collections']);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, /no collections/);
+  assert.match(result.stdout, /only reads them/);
+});
+
+test('collections lists what the account holds', async () => {
+  collections = [{ id: 'coll-0001', name: 'Paywall research', contentCount: 12, updatedAt: '2026-08-01T00:00:00Z' }];
+  try {
+    const [collection] = JSON.parse((await run(['collections', '--json'])).stdout);
+    assert.equal(collection.name, 'Paywall research');
+    assert.equal(collection.contentCount, 12);
+  } finally {
+    collections = [];
+  }
+});
+
+test('saved answers which of the given ids are saved', async () => {
+  const result = await run(['saved', 'screens', 'sign-0001', 'sign-0002', '--json']);
+  assert.equal(result.status, 0);
+  assert.deepEqual(JSON.parse(result.stdout), [
+    { id: 'sign-0001', saved: true },
+    { id: 'sign-0002', saved: false },
+  ]);
+});
+
+test('saved rejects a content type the upstream does not accept', async () => {
+  const result = await run(['saved', 'uiElements', 'sign-0001']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /type must be one of/);
+});
+
+test('recent reads the search history without ever writing to it', async () => {
+  const result = await run(['recent', '--json']);
+  assert.equal(result.status, 0);
+  const sections = JSON.parse(result.stdout);
+  assert.equal(sections.find(section => section.platform === 'ios').searches[0].query, 'expense tracker');
+  // An app-scoped recent search carries the app rather than a text query.
+  assert.equal(sections.find(section => section.platform === 'web').searches[0].query, 'Linear');
+  assert.equal(seen.counts['/api/search-bar/upsert-recent-search'], undefined);
+});
+
+test('no command writes to the shared upstream account', async () => {
+  for (const args of [['trending'], ['popular', '-n', '1'], ['collections'], ['recent'], ['saved', 'screens', 'sign-0001']]) {
+    await run([...args, '--json']);
+  }
+  const written = Object.keys(seen.counts).filter(url => /upsert|create|new-content|new-version|checkout|subscription/.test(url));
+  assert.deepEqual(written, []);
+});
+
+// ------------------------------------------------------------------ stats
+test('stats reports the real library size, not the catalog previews', async () => {
+  const stats = JSON.parse((await run(['stats'])).stdout);
+  assert.equal(stats.screens, 633053);
+  assert.notEqual(stats.screens, stats.previewScreens);
 });
 
 // --------------------------------------------------------------- upstream

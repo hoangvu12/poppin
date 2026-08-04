@@ -37,10 +37,13 @@ pass it whenever you intend to show something.
 | A specific control ("bottom sheets", "date pickers") | `poppin elements <query>` |
 | Everything one app ships, or how it changed | `poppin app <name>` |
 | Which apps exist in a space | `poppin find <query>` |
+| The leading apps in a space, unprompted | `poppin popular --category <name>` |
+| What is popular right now | `poppin trending` |
 | Marketing and landing pages | `poppin sites <query>` |
+| Which companies exist in a space | `poppin find <query> -p sites` |
 | One piece of a landing page ("hero", "pricing table") | `poppin sections --pattern <name>` |
 | Screens that look like an image they have | `poppin similar <file>` |
-| One screen, by id | `poppin screen <id>` |
+| One screen or one flow, by id | `poppin screen <id>` / `poppin flow <id>` |
 
 ## The vocabulary
 
@@ -79,6 +82,10 @@ poppin tags elements --platform web
 poppin tags patterns --search checkout --definitions
 poppin tags --platform sites             # the separate sites vocabulary
 ```
+
+`poppin trending` is the shortcut when the user has no particular term in mind:
+it prints the terms Mobbin is promoting, each labelled with the option it goes
+to (`Signup (--pattern)`), so its output feeds straight into a search.
 
 ## Searching screens
 
@@ -131,13 +138,22 @@ platform, and their vocabulary is its own — an app category name will not work
 there even when the word is identical. There is no free-text fallback either: an
 unrecognised query fails with suggestions, so take the suggestion.
 
+**`find <query> -p sites`** is the only way to reach a marketing site by what
+the company *does*; `sites` filters by category and visual style, never words.
+
 **`similar <file>`** uploads a screenshot and ranks Mobbin's library by visual
 likeness. Screens only, 5 MB maximum, PNG/JPEG/WebP/GIF/AVIF. A natural pairing
 is to pull one screen with `--images` first and then search on it.
 
-**`screen <id>`** needs the **full** id for anything that came from a search —
-the shortened ids in the tables only match the handful of preview screens in the
-catalog. Take the id from `--json`.
+**`screen <id>` and `flow <id>`** need the **full** id — the shortened ids in
+the tables only match the handful of preview screens in the catalog. Take the id
+from `--json`. Prefer `flow <id>` over re-running a search when you already know
+the flow: its frame URLs do not expire, and search results' do.
+
+**`popular`** answers "who leads this space" with no query, ranking on Mobbin's
+own signal rather than on words you supply. **`collections`** and **`saved`**
+read what the account holder curated in Mobbin's UI, which is a way for a human
+to hand-pick screens for you. poppin never writes to that account.
 
 ## Screenshots
 

@@ -8,7 +8,7 @@ import path from 'node:path';
  */
 export const BASE = process.env.POPPIN_BASE || 'https://nibbom.nguyenvu.dev';
 
-export const USER_AGENT = 'poppin/0.4 (+https://github.com/hoangvu12/poppin)';
+export const USER_AGENT = 'poppin/0.5 (+https://github.com/hoangvu12/poppin)';
 
 export const PLATFORMS = ['ios', 'web'];
 

@@ -1,6 +1,6 @@
 {
   "name": "poppin-cli",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Search real app UI screens, flows, and elements from the command line. No account, no database, no local library.",
   "type": "module",
   "bin": {

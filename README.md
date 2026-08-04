@@ -127,6 +127,18 @@ poppin flows onboarding --images
 poppin flows --action "Purchasing & Ordering" --app deliveroo --images
 ```
 
+### flow
+
+One flow by its full id, with every frame. Worth preferring over a `flows`
+search when you already know which flow you want: the frames here carry
+permanent storage URLs, where search results carry signed CDN links that
+expire. Each frame also lists the UI elements on it.
+
+```bash
+poppin flow cc454aaf-c5b6-40c3-8bef-3b815a88d168
+poppin flow cc454aaf-c5b6-40c3-8bef-3b815a88d168 --no-images --json
+```
+
 ### elements
 
 Screens containing a given UI element. Mobbin returns the whole screen rather
@@ -164,6 +176,46 @@ Conceptual queries work because the curated keywords are searched too:
 "meditation calm sleep" returns Calm, Calm Sleep, and Endel. Apps matching every
 term in the query rank above apps that matched only one. Passing `--category`
 switches to Mobbin's own app search instead of local ranking.
+
+`--platform sites` searches the sites index the same way. This is the only way
+to reach a marketing site by what the company does — `poppin sites` filters by
+category and visual style, never by words.
+
+```bash
+poppin find "developer tools api" --platform sites
+```
+
+### trending
+
+What Mobbin is surfacing right now: the apps being viewed most, the filter tags
+it is promoting, and the on-screen copy people are searching for. Editorial
+rather than a query, so it is the only honest answer to "what is popular".
+
+Each promoted filter is printed with the option it belongs to, so the output
+feeds straight back into a search.
+
+```bash
+poppin trending
+poppin trending --platform sites
+```
+
+```
+trending on ios
+  apps: Revolut, Airbnb, Duolingo, Spotify, Uber, Wise
+  filters: Onboarding (--action), Signup (--pattern), Card (--element)
+  on-screen copy: Forgot Password, Upgrade, Bluetooth, Payment
+```
+
+### popular
+
+The most-viewed apps in each category, with preview screens. Where `find` ranks
+on words you supply, this ranks on Mobbin's own popularity signal — so it
+answers "who is worth looking at in this space" with no query at all.
+
+```bash
+poppin popular
+poppin popular --category finance -n 3 --images
+```
 
 ### screen
 
@@ -214,10 +266,34 @@ poppin search --pattern Login --limit 1 --images
 poppin similar ~/screens/that-one.webp --limit 20
 ```
 
+### collections, saved, recent
+
+What the upstream account itself holds. These read Mobbin's account state:
+collections and saved items curated in its own UI, and the searches made there.
+
+The useful pattern is curation by hand: save screens into a Mobbin collection
+in the browser, then have an agent pull exactly those.
+
+```bash
+poppin collections
+poppin saved screens 539361ea-cd64-4829-b6ac-e5dd685b8de8
+poppin recent
+```
+
+`saved` answers which of the ids you give it are saved, rather than listing
+everything — that is how the endpoint works, so the ids are the question.
+
+**poppin only ever reads this account.** Every caller shares one upstream
+session, so a write would land in everyone's account at once. The endpoints
+that would do it — saving, creating collections, recording a search — are
+deliberately not wired.
+
 ### stats
 
 What the upstream currently holds, the size of each vocabulary, and where
-screenshots are written.
+screenshots are written. `screens` is the real library size; `previewScreens`
+is only what the search-bar catalog carries, which is smaller by two orders of
+magnitude.
 
 ```bash
 poppin stats
@@ -227,22 +303,22 @@ poppin stats
 
 | Option | Applies to | Meaning |
 | --- | --- | --- |
-| `-n, --limit <n>` | `find`, `search`, `flows`, `elements`, `app`, `sites`, `sections`, `similar` | Maximum results |
-| `-p, --platform <list>` | all but `sites`/`sections` | `ios`, `web`, or `ios,web`. Defaults to `ios`, except `screen` and `stats` which check both. `tags` also accepts `sites` |
+| `-n, --limit <n>` | `find`, `search`, `flows`, `elements`, `app`, `sites`, `sections`, `similar`, `trending`, `popular` | Maximum results |
+| `-p, --platform <list>` | all but `sites`/`sections`/`collections`/`saved` | `ios`, `web`, or `ios,web`. Defaults to `ios`, except `screen`, `stats` and `recent` which check both. `find`, `trending`, `tags` also accept `sites` |
 | `--pattern <name>` | `search`, `elements`, `sections` | Screen pattern, or page/section pattern on `sections`. Repeatable; several are OR'd |
 | `--element <name>` | `search`, `elements` | UI element. Repeatable |
 | `--action <name>` | `flows` | Flow action. Repeatable |
-| `--category <name>` | `search`, `flows`, `elements`, `find`, `sites`, `sections` | App category, or site category on the sites commands. Repeatable |
+| `--category <name>` | `search`, `flows`, `elements`, `find`, `sites`, `sections`, `popular` | App category, or site category on the sites commands. A substring match on `popular`. Repeatable |
 | `--style <name>` | `sites`, `sections` | Visual style of the site. Repeatable |
 | `--text <copy>` | `search`, `elements`, `sections` | Text rendered inside the screenshot |
 | `--animated` | `search`, `elements` | Only screens with a recorded animation |
 | `--app <name>` | `search`, `flows`, `elements`, `similar` | Restrict to apps whose name contains this |
 | `--sort <order>` | `search`, `flows`, `elements`, `sites`, `sections` | `popularity`, `publishedAt`, `trending`. Defaults to `popularity`, or `publishedAt` on the sites commands |
 | `--all`, `--versions`, `--version <id>` | `app` | Span every version, list them, or pick one |
-| `--images` | `find`, `search`, `flows`, `elements`, `app` | Download the screenshots |
-| `--no-images` | `screen` | Skip the download |
+| `--images` | `find`, `search`, `flows`, `elements`, `app`, `sections`, `similar`, `popular` | Download the screenshots |
+| `--no-images` | `screen`, `flow` | Skip the download |
 | `--refresh` | filtered commands, `tags` | Re-fetch the cached vocabulary |
-| `--json` | all | Machine-readable output |
+| `--json` | all but `stats`, which always emits JSON | Machine-readable output |
 
 Under `--json`, progress messages go to stderr so stdout stays parseable.
 Different filter kinds are AND'd together; repeating one kind ORs its values.
@@ -299,6 +375,20 @@ Results are never cached. `--refresh` re-fetches it.
   rewritten one, so the flag says what Mobbin's own UI would gate behind a
   subscription — most rows, in practice. Screenshots are fetched from the CDN
   directly and are unaffected: every restricted row tested downloaded normally.
+
+## What is deliberately not built
+
+poppin covers every read endpoint that carries content. Four groups are left
+alone on purpose:
+
+- **Anything that writes.** Saving, creating collections, recording a search,
+  submitting content requests. One Mobbin session is shared by every caller, so
+  a write is a write to everybody's account.
+- **Billing.** Checkout sessions, subscription changes, the cancellation flow.
+  A CLI has no business touching someone's payment state.
+- **Support mail.** `send-support-mail` reaches a real company's support desk.
+- **The AI search streams.** `search/ai/screens` and `search/ai/flows` are the
+  paid semantic mode; the account is not entitled to them.
 
 ## Development
 

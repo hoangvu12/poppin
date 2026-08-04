@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { FILTERS, MAX_PAGES, PAGINATED_CONTENT_TYPES, SITE_FILTERS } from './config.mjs';
-import { postJson, postMultipart } from './upstream.mjs';
+import { getJson, postJson, postMultipart } from './upstream.mjs';
 
 const SEARCH_PATH = {
   screens: '/api/search/fetch-search-page-screens',
@@ -356,6 +356,222 @@ export async function fetchScreenInfo(screenId) {
     fullpage: value.fullpageScreenCdnImgSources?.src || null,
     animation: value.animationCdnVideoSources?.source?.url || null,
     path: null,
+  };
+}
+
+const FLOW_INFO_PATH = '/api/flow/fetch-flow-info';
+
+/**
+ * One flow by its full id, with every frame.
+ *
+ * Worth preferring over a `flows` search even when both could answer, because
+ * the frames here carry the storage URL. Search results only carry the
+ * `enc=`-signed CDN source, which expires; these do not.
+ *
+ * The payload is shaped for the flow detail page rather than for a list: tags
+ * arrive as nested dictionary entries grouped by category slug, and the frames
+ * come back already ordered, with no explicit order field to sort on.
+ */
+export async function fetchFlowInfo(flowId) {
+  let value;
+  try {
+    value = await postJson(FLOW_INFO_PATH, { flowId });
+  } catch {
+    return null;
+  }
+  if (!value?.id) return null;
+
+  const app = value.appVersion?.app || {};
+  const frames = (value.appSectionScreens || []).map((entry, index) => {
+    const screen = entry?.appScreen || {};
+    return {
+      order: index + 1,
+      // The same screen can legitimately appear twice in one flow, so a frame
+      // is addressed by its position rather than by the screen it shows.
+      id: `flow-${value.id}-${String(index + 1).padStart(3, '0')}`,
+      screenId: screen.id ? String(screen.id) : null,
+      elements: dictionaryTags(screen.content_dictionary_tags, 'screenElements'),
+      url: screen.screenUrl || null,
+      path: null,
+    };
+  });
+
+  return {
+    id: String(value.id),
+    name: value.name || null,
+    actions: dictionaryTags(value.content_dictionary_tags, 'flowActions'),
+    appName: app.appName || null,
+    platform: app.platform || null,
+    screenCount: frames.length,
+    screens: frames,
+  };
+}
+
+/**
+ * Flatten Mobbin's nested tag records down to display names, keeping only the
+ * dictionary asked for. The shape is `{dictionary_entries: {displayName,
+ * dictionary_sub_categories: {dictionary_categories: {slug}}}}`.
+ */
+function dictionaryTags(tags, slug) {
+  return (tags || [])
+    .map(tag => tag?.dictionary_entries)
+    .filter(entry => entry?.dictionary_sub_categories?.dictionary_categories?.slug === slug)
+    .map(entry => entry.displayName)
+    .filter(Boolean);
+}
+
+const TRENDING_PATH = '/api/search-bar/fetch-trending-content';
+const POPULAR_APPS_PATH = '/api/popular-apps/fetch-popular-apps-with-preview-screens';
+const TOTAL_SCREENS_PATH = '/api/content/fetch-total-screens-count';
+
+/**
+ * What Mobbin is currently surfacing, per platform and for sites: the apps
+ * being viewed most, the filter tags it is promoting, and the on-screen copy
+ * people are searching for. This is editorial rather than a query, which makes
+ * it the one honest answer to "what is popular right now".
+ */
+export async function fetchTrending() {
+  const value = await postJson(TRENDING_PATH, {});
+  const perPlatform = (key) => {
+    const group = value?.[key] || {};
+    return {
+      apps: (group.apps || []).map(app => ({
+        id: String(app.id),
+        appName: app.appName || null,
+        platform: app.platform || key,
+        metric: app.trending_metric ?? null,
+      })),
+      filterTags: trendingTags(group.filterTags),
+      keywords: (group.textInScreenshotKeywords || []).map(String),
+    };
+  };
+  const sites = value?.sites || {};
+  return {
+    ios: perPlatform('ios'),
+    web: perPlatform('web'),
+    sites: {
+      sites: (sites.sites || []).map(site => ({
+        id: String(site.id),
+        name: site.name || null,
+        metric: site.trending_metric ?? null,
+      })),
+      filterTags: trendingTags(sites.filterTags),
+    },
+  };
+}
+
+/** Which CLI option each dictionary feeds, so a trending tag is actionable. */
+const OPTION_BY_CATALOG = new Map([
+  ...Object.entries(FILTERS).map(([option, spec]) => [spec.catalog, option]),
+  ...Object.entries(SITE_FILTERS).map(([option, spec]) => [spec.catalog, option]),
+]);
+
+/**
+ * A promoted tag arrives wrapped in presentation — a card type, an image, an
+ * order — with the tag itself nested under `filterTag`. What matters is its
+ * display name and which dictionary it came from, because together those say
+ * exactly which option it can be passed to.
+ */
+function trendingTags(rows) {
+  return (rows || [])
+    .slice()
+    .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+    .map(row => {
+      const tag = row?.filterTag || {};
+      return {
+        name: tag.displayName || null,
+        option: OPTION_BY_CATALOG.get(tag.categorySlug) || null,
+        group: tag.subCategory || null,
+      };
+    })
+    .filter(tag => tag.name);
+}
+
+/**
+ * The most popular apps in each category, with preview screens.
+ *
+ * Answers "who is worth looking at in this space" without a query, which no
+ * search can: `find` ranks on words the caller supplies, and this ranks on
+ * Mobbin's own popularity signal. The response is keyed by category name, and
+ * the categories are lowercased there but title-cased everywhere else in the
+ * vocabulary, so they are normalised into rows rather than left as an object.
+ */
+export async function fetchPopularApps({ platform = 'ios', perCategory = 10 } = {}) {
+  const value = await postJson(POPULAR_APPS_PATH, { platform, limitPerCategory: perCategory });
+  return Object.entries(value || {}).map(([category, apps]) => ({
+    category,
+    platform,
+    apps: (apps || []).map(app => ({
+      id: String(app.app_id),
+      appName: app.app_name || null,
+      logo: app.app_logo_url || null,
+      previews: (app.preview_screens || [])
+        .map(screen => ({ id: String(screen.id), url: screen.screenUrl || null, path: null }))
+        .filter(screen => screen.url),
+    })),
+  }));
+}
+
+/** How many screens Mobbin actually holds, across every app and platform. */
+export async function fetchTotalScreens() {
+  const value = await postJson(TOTAL_SCREENS_PATH, {});
+  return Number.isFinite(value) ? value : null;
+}
+
+const COLLECTIONS_PATH = '/api/collection/fetch-collections';
+const SAVED_PATH = '/api/saved/fetch-saved-contents';
+const RECENT_SEARCHES_PATH = '/api/recent-searches';
+
+/**
+ * The upstream account's own collections and saved items.
+ *
+ * poppin only ever reads these. Every caller shares one upstream session, so a
+ * write would be a write to everybody's account at once — and the endpoints
+ * that would do it are deliberately not wired. What these return is whatever
+ * the account holder curated in Mobbin's own UI, which is the point: it lets a
+ * human pick screens in the browser and an agent pull exactly those.
+ */
+export async function fetchCollections() {
+  const value = await postJson(COLLECTIONS_PATH, {});
+  return (Array.isArray(value) ? value : []).map(row => ({
+    id: String(row.id ?? ''),
+    name: row.name ?? row.collectionName ?? null,
+    contentCount: row.contentCount ?? row.content_count ?? null,
+    updatedAt: row.updatedAt ?? row.updated_at ?? null,
+  }));
+}
+
+/**
+ * Saved rows of one content type. `contentIds` is required and narrows the
+ * answer to that set — the endpoint reports which of the ids given are saved
+ * rather than listing everything saved, so an empty list is a rejected request
+ * rather than an empty answer.
+ */
+export async function fetchSavedContents(contentType, contentIds) {
+  if (!contentIds?.length) return [];
+  const value = await postJson(SAVED_PATH, { contentType, contentIds });
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * The account's recent searches, as recorded by Mobbin's own UI. poppin never
+ * writes here: `upsert-recent-search` is left unwired, so this reflects
+ * browsing rather than anything the CLI did.
+ */
+export async function fetchRecentSearches() {
+  const value = await getJson(RECENT_SEARCHES_PATH);
+  const entries = (list, platform) => (list || []).map(row => ({
+    id: String(row.id ?? ''),
+    platform: row.platform || platform,
+    experience: row.experience || null,
+    query: row.textQuery || row.app?.appName || row.site?.name || null,
+    method: row.textQueryMethod || (row.app ? 'App' : row.site ? 'Site' : null),
+  })).filter(row => row.query);
+
+  return {
+    ios: entries(value?.apps?.ios, 'ios'),
+    web: entries(value?.apps?.web, 'web'),
+    sites: entries(value?.sites, 'sites'),
   };
 }
 

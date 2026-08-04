@@ -6,12 +6,13 @@ import {
   BASE, CONTENT_TYPES, FILTERS, FILTER_BY_KIND, PLATFORMS, SITE_CONTENT_TYPES,
   SITE_FILTERS, SITE_FILTER_BY_KIND, SORTS,
 } from '../src/config.mjs';
-import { fetchCatalog, fetchCatalogs, toScreens } from '../src/catalog.mjs';
+import { fetchCatalog, fetchCatalogs, fetchSiteCatalog, toScreens } from '../src/catalog.mjs';
 import { matchAppName, rankApps } from '../src/search.mjs';
 import {
   FREE_TEXT_CONTENT_TYPES, MAX_VISUAL_SEARCH_BYTES, buildFreeTextQuery, buildSearchQuery,
-  buildSiteSearchQuery, buildVisualSearchQuery, fetchAppLibrary, fetchScreenInfo,
-  resolveViaSearchBar, searchContent, uploadVisualSearchImage,
+  buildSiteSearchQuery, buildVisualSearchQuery, fetchAppLibrary, fetchCollections, fetchFlowInfo,
+  fetchPopularApps, fetchRecentSearches, fetchSavedContents, fetchScreenInfo, fetchTotalScreens,
+  fetchTrending, resolveViaSearchBar, searchContent, uploadVisualSearchImage,
 } from '../src/mobbin.mjs';
 import { fetchTaxonomy, findTagById, resolveTagName, tagsFor } from '../src/taxonomy.mjs';
 import { fetchHealth } from '../src/upstream.mjs';
@@ -20,7 +21,7 @@ import { IMG_DIR, imagePath, saveImages } from '../src/images.mjs';
 const program = new Command();
 program.name('poppin')
   .description('Search real app UI screens, flows, and elements from the command line, served by nibbom')
-  .version('0.4.0');
+  .version('0.5.0');
 
 const out = (obj) => console.log(JSON.stringify(obj, null, 2));
 
@@ -45,6 +46,12 @@ function platformsFrom(option) {
   if (unknown) throw new Error(`platform must be one of ${PLATFORMS.join(', ')}`);
   return list;
 }
+
+/**
+ * Sites are an experience rather than a platform, but they are browsed through
+ * the same options, so `--platform sites` is accepted where it means something.
+ */
+const isSites = (option) => String(option || '').toLowerCase() === 'sites';
 
 /**
  * Attach whatever image each row already has on disk, then download the rest
@@ -235,16 +242,33 @@ const reportCount = (shown, totalCount, hasMore) => {
 program.command('find <query...>')
   .description('Search apps by name, tagline, or curated keywords, with their preview screens')
   .option('-n, --limit <n>', 'max apps', '12')
-  .option('-p, --platform <list>', 'comma separated: ios,web', 'ios')
+  .option('-p, --platform <list>', 'comma separated: ios,web, or sites', 'ios')
   .option('--category <name>', 'restrict to an app category (repeatable)', collect)
   .option('--images', 'download the preview screenshots')
   .option('--refresh', 're-fetch the cached filter vocabulary')
   .option('--json', 'machine-readable output')
   .action(async (query, options) => {
-    const platforms = platformsFrom(options.platform);
     const limit = Number(options.limit);
     let matches;
 
+    // The sites index is the only way to reach a site by what it is about: the
+    // sites search endpoint filters by category and style, never by words.
+    if (isSites(options.platform)) {
+      if (options.category?.length) {
+        throw new Error('--category is an app axis; for sites use `poppin sites --category <name>`.');
+      }
+      matches = rankApps(await fetchSiteCatalog(), query.join(' '), { limit });
+      if (options.json) return out(matches.map(appView));
+      if (!matches.length) return console.log('no matching sites');
+      for (const site of matches) {
+        console.log(`\n${site.appName}  [sites]  ${site.id.slice(0, 8)}`);
+        if (site.tagline) console.log(`  ${site.tagline}`);
+        if (site.keywords?.length) console.log(`  keywords: ${site.keywords.join(', ')}`);
+      }
+      return console.log(`\n${matches.length} site(s). \`poppin sites\` has their page images.`);
+    }
+
+    const platforms = platformsFrom(options.platform);
     if (options.category?.length) {
       // A category is Mobbin's own axis, so the upstream app search answers it;
       // the words in the query then rank what came back.
@@ -618,6 +642,174 @@ program.command('screen <id>')
     if (resolved.animation) console.log(`animation: ${resolved.animation}`);
   });
 
+program.command('flow <id>')
+  .description('Show one flow by id, with every frame in order, and download them')
+  .option('--no-images', 'do not download the frames')
+  .option('--json', 'machine-readable output')
+  .action(async (id, options) => {
+    const flow = await fetchFlowInfo(id);
+    if (!flow) {
+      const isPrefix = id.length < 36;
+      console.log(isPrefix
+        ? `not found. "${id}" is a shortened id; the upstream resolves a flow only by its whole id.\nTake it from \`poppin flows --json\`.`
+        : 'not found');
+      process.exitCode = 1;
+      return;
+    }
+    await withImages(flow.screens, { download: options.images, json: options.json });
+
+    if (options.json) return out(flow);
+    console.log(`\n${flow.appName || '(unknown app)'}  [${flow.platform || '?'}]  ${flow.name || flow.actions.join(', ')}`);
+    console.log(`id: ${flow.id}`);
+    console.log(`${flow.screenCount} frame(s):`);
+    for (const frame of flow.screens) {
+      const elements = frame.elements.length ? `  (${truncate(frame.elements.join(', '), 40)})` : '';
+      console.log(`  ${String(frame.order).padStart(2)}. ${frame.path || '(not downloaded)'}${elements}`);
+    }
+  });
+
+// --------------------------------------------------------------- discovery
+program.command('trending')
+  .description("What Mobbin is surfacing now: apps, filter tags, and on-screen copy")
+  .option('-p, --platform <list>', 'comma separated: ios,web, or sites', 'ios')
+  .option('-n, --limit <n>', 'max rows per section', '10')
+  .option('--json', 'machine-readable output')
+  .action(async (options) => {
+    const trending = await fetchTrending();
+    const wanted = isSites(options.platform) ? ['sites'] : platformsFrom(options.platform);
+    const limit = Number(options.limit);
+    const sections = wanted.map(platform => {
+      const group = trending[platform] || {};
+      return {
+        platform,
+        apps: (platform === 'sites' ? group.sites : group.apps || []).slice(0, limit),
+        filterTags: (group.filterTags || []).slice(0, limit),
+        keywords: (group.keywords || []).slice(0, limit),
+      };
+    });
+
+    if (options.json) return out(sections);
+    for (const section of sections) {
+      console.log(`\ntrending on ${section.platform}`);
+      if (section.apps.length) {
+        console.log(`  ${section.platform === 'sites' ? 'sites' : 'apps'}: ${section.apps.map(app => app.appName || app.name).join(', ')}`);
+      }
+      if (section.filterTags.length) {
+        console.log(`  filters: ${section.filterTags.map(tag => `${tag.name}${tag.option ? ` (--${tag.option})` : ''}`).join(', ')}`);
+      }
+      if (section.keywords.length) console.log(`  on-screen copy: ${section.keywords.join(', ')}`);
+    }
+    console.log('\nEvery filter above is a vocabulary term: pass it to the option named beside it.\nThe on-screen copy goes to --text.');
+  });
+
+program.command('popular')
+  .description("The most-viewed apps in each category, with preview screens")
+  .option('-p, --platform <platform>', 'ios or web', 'ios')
+  .option('-n, --limit <n>', 'max apps per category', '5')
+  .option('--category <name>', 'only this category (substring match, repeatable)', collect)
+  .option('--images', 'download the preview screenshots')
+  .option('--json', 'machine-readable output')
+  .action(async (options) => {
+    const [platform] = platformsFrom(options.platform);
+    const perCategory = Number(options.limit);
+    let groups = await fetchPopularApps({ platform, perCategory });
+
+    if (options.category?.length) {
+      const needles = options.category.map(value => value.toLowerCase());
+      groups = groups.filter(group => needles.some(needle => group.category.toLowerCase().includes(needle)));
+      if (!groups.length) {
+        const available = (await fetchPopularApps({ platform, perCategory: 1 })).map(group => group.category);
+        throw new Error(`no popular-apps category matched. Available: ${available.join(', ')}`);
+      }
+    }
+    groups = groups.map(group => ({ ...group, apps: group.apps.slice(0, perCategory) }));
+
+    const previews = groups.flatMap(group => group.apps.flatMap(app =>
+      app.previews.map(preview => ({ ...preview, appName: app.appName }))));
+    await withImages(previews, { download: options.images, json: options.json });
+    const byId = new Map(previews.map(preview => [preview.id, preview]));
+    for (const group of groups) {
+      for (const app of group.apps) {
+        for (const preview of app.previews) preview.path = byId.get(preview.id)?.path ?? null;
+      }
+    }
+
+    if (options.json) return out(groups);
+    for (const group of groups) {
+      console.log(`\n${group.category}  [${group.platform}]`);
+      for (const app of group.apps) {
+        const files = app.previews.map(preview => preview.path).filter(Boolean);
+        console.log(`  ${app.appName.padEnd(24)} ${app.id.slice(0, 8)}  ${files.length ? files.join('  ') : `${app.previews.length} preview(s), not downloaded`}`);
+      }
+    }
+    console.log(`\n${groups.length} category(ies).`);
+  });
+
+// ----------------------------------------------------------- account state
+/**
+ * Everything below reads the upstream account and never writes to it. One
+ * Mobbin session is shared by every poppin caller, so a write would land in
+ * everybody's account at once; the endpoints that would do it stay unwired.
+ */
+program.command('collections')
+  .description("Collections saved in the upstream account's Mobbin library")
+  .option('--json', 'machine-readable output')
+  .action(async (options) => {
+    const collections = await fetchCollections();
+    if (options.json) return out(collections);
+    if (!collections.length) {
+      return console.log('no collections. These are curated in Mobbin\'s own UI; poppin only reads them.');
+    }
+    table(collections.map(collection => ({
+      id: collection.id.slice(0, 8),
+      name: truncate(collection.name, 34),
+      items: collection.contentCount ?? '-',
+      updated: String(collection.updatedAt || '').slice(0, 10),
+    })), ['id', 'name', 'items', 'updated']);
+    console.log(`\n${collections.length} collection(s).`);
+  });
+
+const SAVED_CONTENT_TYPES = ['screens', 'flows', 'apps', 'sites', 'sections'];
+
+program.command('saved <type> <ids...>')
+  .description(`Which of the given ids are saved upstream: ${SAVED_CONTENT_TYPES.join(', ')}`)
+  .option('--json', 'machine-readable output')
+  .action(async (type, ids, options) => {
+    if (!SAVED_CONTENT_TYPES.includes(type)) {
+      throw new Error(`type must be one of ${SAVED_CONTENT_TYPES.join(', ')}`);
+    }
+    // The endpoint answers "which of these are saved" rather than "list
+    // everything saved", so the ids are the question, not a filter on it.
+    const saved = await fetchSavedContents(type, ids);
+    const savedIds = new Set(saved.map(row => String(row?.contentId ?? row?.id ?? row)));
+    const rows = ids.map(id => ({ id, saved: savedIds.has(id) }));
+
+    if (options.json) return out(rows);
+    table(rows.map(row => ({ id: row.id.slice(0, 8), saved: row.saved ? 'yes' : 'no' })), ['id', 'saved']);
+    console.log(`\n${savedIds.size} of ${ids.length} saved.`);
+  });
+
+program.command('recent')
+  .description("Recent searches recorded in the upstream account by Mobbin's own UI")
+  .option('-p, --platform <list>', 'comma separated: ios,web, or sites', 'ios,web')
+  .option('--json', 'machine-readable output')
+  .action(async (options) => {
+    const recent = await fetchRecentSearches();
+    const wanted = isSites(options.platform) ? ['sites'] : platformsFrom(options.platform);
+    const sections = wanted.map(platform => ({ platform, searches: recent[platform] || [] }));
+
+    if (options.json) return out(sections);
+    let total = 0;
+    for (const section of sections) {
+      if (!section.searches.length) continue;
+      console.log(`\n${section.platform}`);
+      for (const search of section.searches) console.log(`  ${search.query}  (${search.method || '?'})`);
+      total += section.searches.length;
+    }
+    if (!total) return console.log('no recent searches');
+    console.log(`\n${total} search(es). poppin never writes here — this is browser activity on the shared account.`);
+  });
+
 program.command('tags [kind]')
   .description('The vocabulary the filters accept: patterns, elements, actions, categories, styles')
   .option('-p, --platform <platform>', 'ios, web, or sites', 'ios')
@@ -696,11 +888,15 @@ program.command('stats')
     }
     const sites = await searchContent(buildSiteSearchQuery({ contentType: 'sites' }), { limit: 1 });
     const sections = await searchContent(buildSiteSearchQuery({ contentType: 'sections' }), { limit: 1 });
+    // The catalog only carries a few previews per app, so counting it says
+    // nothing about the library's real size. The upstream knows the true total.
+    const totalScreens = await fetchTotalScreens().catch(() => null);
 
     out({
       source: BASE,
       contentTypes: [...CONTENT_TYPES, ...SITE_CONTENT_TYPES],
       apps: byPlatform.reduce((total, entry) => total + entry.apps, 0),
+      screens: totalScreens,
       previewScreens: screens,
       byPlatform,
       sites: {

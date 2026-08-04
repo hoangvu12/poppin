@@ -27,6 +27,37 @@ export async function fetchCatalogs(platforms = ['ios']) {
   return lists.flat();
 }
 
+const SITE_CATALOG_PATH = '/api/search-bar/fetch-searchable-sites';
+
+/**
+ * The sites index behind the search bar: every marketing site with its curated
+ * keywords. The sites *search* endpoint filters by category and style only, so
+ * this is the only way to reach a site by what it is about — the same role the
+ * app catalog plays for `find`.
+ *
+ * Shaped like an app record on purpose, so one ranker serves both.
+ */
+export async function fetchSiteCatalog() {
+  const payload = await postJson(SITE_CATALOG_PATH, {});
+  const records = Array.isArray(payload) ? payload : payload?.data || payload?.sites;
+  if (!Array.isArray(records) || !records.length) {
+    throw upstreamError('UPSTREAM_INVALID', 'the upstream returned an empty site catalog');
+  }
+  return records
+    .filter(record => record?.id && record?.name)
+    .map(record => ({
+      id: String(record.id),
+      platform: 'sites',
+      appName: String(record.name),
+      tagline: record.tagline ? String(record.tagline) : null,
+      keywords: Array.isArray(record.keywords) ? record.keywords.map(String) : [],
+      logoUrl: pickLogo(record.logoCdnImgSources),
+      // Sites carry no preview screens in this index; `poppin sites` has the
+      // page images.
+      previews: [],
+    }));
+}
+
 export function normaliseApp(record, platform) {
   if (!record?.id || !record?.appName) return null;
   return {
