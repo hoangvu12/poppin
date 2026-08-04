@@ -175,6 +175,38 @@ poppin screen 2729b66d
 poppin screen 2729b66d --no-images --json
 ```
 
+### sites
+
+Mobbin's other library: marketing sites, filtered by what the company does and
+how the page looks. Sites have no platform, and their vocabulary is separate
+from the app one — a sites category is not an app category.
+
+```bash
+poppin sites --category Finance --style Dark
+poppin sites brutalist
+poppin tags --platform sites
+```
+
+### sections
+
+The individual pieces those pages are built from — heroes, pricing tables,
+FAQs, footers — searchable on their own.
+
+```bash
+poppin sections --pattern "Hero Section"
+poppin sections --pattern Pricing --text "per month" --images
+```
+
+### similar
+
+Search by screenshot rather than by word. The image is uploaded, and Mobbin
+ranks its library by visual similarity. Screens only, and at most 5 MB.
+
+```bash
+poppin search --pattern Login --limit 1 --images
+poppin similar ~/screens/that-one.webp --limit 20
+```
+
 ### stats
 
 What the upstream currently holds, the size of each vocabulary, and where
@@ -188,16 +220,17 @@ poppin stats
 
 | Option | Applies to | Meaning |
 | --- | --- | --- |
-| `-n, --limit <n>` | `find`, `search`, `flows`, `elements`, `app` | Maximum results |
-| `-p, --platform <list>` | all | `ios`, `web`, or `ios,web`. Defaults to `ios`, except `screen` and `stats` which check both |
-| `--pattern <name>` | `search`, `elements` | Screen pattern. Repeatable; several are OR'd |
+| `-n, --limit <n>` | `find`, `search`, `flows`, `elements`, `app`, `sites`, `sections`, `similar` | Maximum results |
+| `-p, --platform <list>` | all but `sites`/`sections` | `ios`, `web`, or `ios,web`. Defaults to `ios`, except `screen` and `stats` which check both. `tags` also accepts `sites` |
+| `--pattern <name>` | `search`, `elements`, `sections` | Screen pattern, or page/section pattern on `sections`. Repeatable; several are OR'd |
 | `--element <name>` | `search`, `elements` | UI element. Repeatable |
 | `--action <name>` | `flows` | Flow action. Repeatable |
-| `--category <name>` | `search`, `flows`, `elements`, `find` | App category. Repeatable |
-| `--text <copy>` | `search`, `elements` | Text rendered inside the screenshot |
+| `--category <name>` | `search`, `flows`, `elements`, `find`, `sites`, `sections` | App category, or site category on the sites commands. Repeatable |
+| `--style <name>` | `sites`, `sections` | Visual style of the site. Repeatable |
+| `--text <copy>` | `search`, `elements`, `sections` | Text rendered inside the screenshot |
 | `--animated` | `search`, `elements` | Only screens with a recorded animation |
-| `--app <name>` | `search`, `flows`, `elements` | Restrict to apps whose name contains this |
-| `--sort <order>` | `search`, `flows`, `elements` | `popularity` (default), `publishedAt`, `trending` |
+| `--app <name>` | `search`, `flows`, `elements`, `similar` | Restrict to apps whose name contains this |
+| `--sort <order>` | `search`, `flows`, `elements`, `sites`, `sections` | `popularity`, `publishedAt`, `trending`. Defaults to `popularity`, or `publishedAt` on the sites commands |
 | `--all`, `--versions`, `--version <id>` | `app` | Span every version, list them, or pick one |
 | `--images` | `find`, `search`, `flows`, `elements`, `app` | Download the screenshots |
 | `--no-images` | `screen` | Skip the download |
@@ -235,25 +268,30 @@ Results are never cached. `--refresh` re-fetches it.
 
 ## Limits
 
-- **One page per search.** The upstream serves up to 100 rows and reports how
-  many matched; requesting the second page through the proxy comes back empty.
-  Result counts are reported honestly, so `5 result(s) of 87 matching upstream`
-  means there are 82 more that this client cannot currently reach.
+- **One page per search, for the content libraries.** Paging is a paid feature:
+  Mobbin's own page only offers a load-more control to a subscribed account, and
+  the upstream enforces the same rule by answering page 1 with `totalCount: 0`.
+  Screens, elements, flows and sections therefore stop after their first page,
+  and counts are reported honestly — `5 result(s) of 87 matching upstream` means
+  there are 82 more this client cannot reach. Apps and sites are directory
+  listings, are not gated, and are read to completion.
 - **Free text does not combine with filters.** Mobbin treats it as a separate
-  mode and ignores tag filters there. Its AI-ranked `deep` mode is rejected for
+  mode and ignores tag filters there. Its AI-ranked `deep` mode is refused for
   this upstream's account, so free text is keyword-ranked, not semantic.
 - **Five filter dimensions Mobbin's own UI shows are not available.** Company
   stage, region, language, web page pattern, and page type are all silently
   ignored by these endpoints — every field-name spelling was probed against a
-  live baseline, and `activeFilterTags` is ignored in every shape too. Mobbin
-  applies them somewhere this API does not reach.
-- **Search by image is not implemented.** Mobbin can search from an uploaded
-  screenshot; poppin cannot.
-- **Sites are not covered.** Mobbin's third experience — marketing site pages
-  and sections, with their own page patterns and visual styles — is not wired
-  up yet.
+  live baseline, and `activeFilterTags` is ignored in every shape too. This is a
+  different failure from the paid ones: an ignored field leaves the result count
+  untouched, where a refused one zeroes it. Mobbin applies these somewhere this
+  API does not reach.
 - **No app-scoped search upstream.** The search endpoints ignore an app id, so
   `--app` narrows the page of results already returned rather than the query.
+- **`restricted` is reported honestly, and does not limit downloads.** poppin
+  asks the proxy for the upstream's real entitlement state rather than the
+  rewritten one, so the flag says what Mobbin's own UI would gate behind a
+  subscription — most rows, in practice. Screenshots are fetched from the CDN
+  directly and are unaffected: every restricted row tested downloaded normally.
 
 ## Development
 

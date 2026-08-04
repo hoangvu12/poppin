@@ -49,11 +49,28 @@ export function tagsFor(taxonomy, platform, catalogName) {
   const experience = EXPERIENCE_BY_PLATFORM[platform];
   const groups = taxonomy?.[experience]?.[catalogName] || [];
   return groups.flatMap(group => (group.tags || []).map(tag => ({
+    id: tag.id ? String(tag.id) : null,
     displayName: String(tag.displayName),
     subCategory: group.displayName || tag.subCategory || null,
     definition: tag.definition || null,
     synonyms: Array.isArray(tag.synonyms) ? tag.synonyms.map(String) : [],
   })));
+}
+
+/**
+ * Find a tag anywhere in the vocabulary by its id.
+ *
+ * Mobbin's search index answers with tag ids rather than names, so this is what
+ * turns that answer back into something the filter endpoints accept. The
+ * catalog a tag came from matters as much as its name, since it decides which
+ * option the value belongs to.
+ */
+export function findTagById(taxonomy, platform, catalogs, id) {
+  for (const [option, catalog] of Object.entries(catalogs)) {
+    const match = tagsFor(taxonomy, platform, catalog).find(tag => tag.id === id);
+    if (match) return { option, name: match.displayName };
+  }
+  return null;
 }
 
 const normalise = (value) => String(value).toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();

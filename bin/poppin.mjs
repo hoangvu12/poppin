@@ -1,10 +1,20 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
 import { Command, Option } from 'commander';
-import { BASE, CONTENT_TYPES, FILTERS, FILTER_BY_KIND, PLATFORMS, SORTS } from '../src/config.mjs';
+import {
+  BASE, CONTENT_TYPES, FILTERS, FILTER_BY_KIND, PLATFORMS, SITE_CONTENT_TYPES,
+  SITE_FILTERS, SITE_FILTER_BY_KIND, SORTS,
+} from '../src/config.mjs';
 import { fetchCatalog, fetchCatalogs, toScreens } from '../src/catalog.mjs';
 import { matchAppName, rankApps } from '../src/search.mjs';
-import { FREE_TEXT_CONTENT_TYPES, buildFreeTextQuery, buildSearchQuery, fetchAppLibrary, searchContent } from '../src/mobbin.mjs';
-import { fetchTaxonomy, resolveTagName, tagsFor } from '../src/taxonomy.mjs';
+import {
+  FREE_TEXT_CONTENT_TYPES, MAX_VISUAL_SEARCH_BYTES, buildFreeTextQuery, buildSearchQuery,
+  buildSiteSearchQuery, buildVisualSearchQuery, fetchAppLibrary, resolveViaSearchBar,
+  searchContent, uploadVisualSearchImage,
+} from '../src/mobbin.mjs';
+import { fetchTaxonomy, findTagById, resolveTagName, tagsFor } from '../src/taxonomy.mjs';
+import { fetchHealth } from '../src/upstream.mjs';
 import { IMG_DIR, imagePath, saveImages } from '../src/images.mjs';
 
 const program = new Command();
@@ -102,6 +112,33 @@ function resolveQuery(taxonomy, platform, query, candidates) {
   return { option: matched.option, name };
 }
 
+/**
+ * Ask Mobbin's own index what a query means, when the local vocabulary has no
+ * answer for it.
+ *
+ * The local pass is tried first because it is instant, works from cache, and is
+ * right nearly always. This is for the phrasing it does not carry: the upstream
+ * index recognises far more than the synonym lists do. It answers with tag ids,
+ * which only mean something once mapped back through the dictionaries.
+ *
+ * A second opinion is never worth failing a search over, so any error here just
+ * means "no answer".
+ */
+async function resolveQueryUpstream(taxonomy, platform, query, candidates) {
+  const catalogs = Object.fromEntries(candidates.map(candidate => [candidate.option, candidate.catalog]));
+  let refs;
+  try {
+    refs = await resolveViaSearchBar(query, { experience: 'apps', platform });
+  } catch {
+    return null;
+  }
+  for (const id of refs.filterTags) {
+    const found = findTagById(taxonomy, platform, catalogs, id);
+    if (found) return found;
+  }
+  return null;
+}
+
 /** Collect repeatable options into a list, so `--pattern a --pattern b` works. */
 const collect = (value, previous = []) => previous.concat([value]);
 
@@ -135,11 +172,19 @@ async function searchAcross(platforms, contentType, options, { query = null, que
         const { option, name } = resolveQuery(taxonomy, platform, query, queryCandidates);
         filters[option] = [...new Set([...(filters[option] || []), name])];
       } catch (error) {
-        // A query that names nothing in the vocabulary is not necessarily a
-        // mistake, so fall through to free-text search. An ambiguous one has
-        // matched several real terms, and only the caller can pick.
-        if (error.code !== 'UNKNOWN_TAG' || !FREE_TEXT_CONTENT_TYPES.includes(contentType)) throw error;
-        freeText = query;
+        // A query that names nothing in the local vocabulary is not necessarily
+        // a mistake. An ambiguous one has matched several real terms, and only
+        // the caller can pick.
+        if (error.code !== 'UNKNOWN_TAG') throw error;
+        const upstream = await resolveQueryUpstream(taxonomy, platform, query, queryCandidates);
+        if (upstream) {
+          filters[upstream.option] = [...new Set([...(filters[upstream.option] || []), upstream.name])];
+          if (!options.json) console.error(`"${query}" resolved to ${upstream.option} "${upstream.name}".`);
+        } else if (FREE_TEXT_CONTENT_TYPES.includes(contentType)) {
+          freeText = query;
+        } else {
+          throw error;
+        }
       }
     }
     if (freeText && Object.keys(filters).length) {
@@ -167,7 +212,7 @@ async function searchAcross(platforms, contentType, options, { query = null, que
         animated: options.animated ? true : null,
         sort: options.sort,
       });
-    const page = await searchContent(searchQuery);
+    const page = await searchContent(searchQuery, { limit });
     totalCount += page.totalCount;
     hasMore = hasMore || page.hasMore;
     merged.push(...page.results);
@@ -330,6 +375,152 @@ addFilterOptions(
   reportCount(page.results.length, page.totalCount, page.hasMore);
 });
 
+// ------------------------------------------------------------------- sites
+/**
+ * The sites experience has no platform axis, so its vocabulary is looked up
+ * under a pseudo-platform of the same name and `--platform` is absent from
+ * every command below.
+ */
+async function resolveSiteFilters(options, { refresh = false } = {}) {
+  const taxonomy = await fetchTaxonomy({ refresh });
+  const filters = {};
+  for (const [option, spec] of Object.entries(SITE_FILTERS)) {
+    const given = options[option];
+    if (!given?.length) continue;
+    filters[option] = given.map(value => resolveTagName(tagsFor(taxonomy, 'sites', spec.catalog), value, { option }));
+  }
+  return filters;
+}
+
+function addSiteFilterOptions(command, contentType) {
+  for (const [option, spec] of Object.entries(SITE_FILTERS)) {
+    if (!spec.contentTypes.includes(contentType)) continue;
+    command.option(`--${option} <name>`, `filter by ${option} (repeatable)`, collect);
+  }
+  return command
+    .addOption(new Option('--sort <order>', 'result ordering').choices(SORTS).default('publishedAt'))
+    .option('--refresh', 're-fetch the cached filter vocabulary')
+    .option('--json', 'machine-readable output');
+}
+
+async function searchSites(contentType, query, options) {
+  const filters = await resolveSiteFilters(options, { refresh: options.refresh });
+  if (query) {
+    const taxonomy = await fetchTaxonomy();
+    const candidates = Object.entries(SITE_FILTERS)
+      .filter(([, spec]) => spec.contentTypes.includes(contentType))
+      .map(([option, spec]) => ({ option, catalog: spec.catalog }));
+    // Sites have no free-text mode, so an unrecognised query is a dead end
+    // rather than a fallback — resolveTagName's suggestions are the answer.
+    const { option, name } = resolveQuery(taxonomy, 'sites', query, candidates);
+    filters[option] = [...new Set([...(filters[option] || []), name])];
+  }
+  return searchContent(
+    buildSiteSearchQuery({ contentType, filters, text: options.text || null, sort: options.sort }),
+    { limit: Number(options.limit) },
+  );
+}
+
+addSiteFilterOptions(
+  program.command('sites [query...]')
+    .description('Search marketing sites by category or visual style')
+    .option('-n, --limit <n>', 'max sites', '30'),
+  'sites',
+).action(async (query, options) => {
+  const page = await searchSites('sites', query.length ? query.join(' ') : null, options);
+  const results = page.results.slice(0, Number(options.limit));
+
+  if (options.json) return out(results);
+  table(results.map(site => ({
+    id: site.id.slice(0, 8),
+    name: truncate(site.name, 26),
+    tagline: truncate(site.tagline, 40),
+    url: truncate(site.url, 30),
+  })), ['id', 'name', 'tagline', 'url']);
+  reportCount(results.length, page.totalCount, page.hasMore);
+});
+
+addSiteFilterOptions(
+  program.command('sections [query...]')
+    .description('Search page sections cut out of marketing sites: heroes, pricing, footers')
+    .option('-n, --limit <n>', 'max sections', '30')
+    .option('--text <copy>', 'match text rendered inside the section')
+    .option('--images', 'download the section images'),
+  'sections',
+).action(async (query, options) => {
+  const page = await searchSites('sections', query.length ? query.join(' ') : null, options);
+  const results = await withImages(page.results.slice(0, Number(options.limit)), {
+    download: options.images, json: options.json,
+  });
+
+  if (options.json) return out(results);
+  table(results.map(section => ({
+    id: section.id.slice(0, 8),
+    patterns: truncate(section.patterns.join(', '), 30),
+    page: truncate(section.pageUrl, 38),
+    image: section.path || '-',
+  })), ['id', 'patterns', 'page', 'image']);
+  reportCount(results.length, page.totalCount, page.hasMore);
+});
+
+// ----------------------------------------------------------- visual search
+const MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.avif': 'image/avif',
+};
+
+program.command('similar <image>')
+  .description('Search screens that look like a screenshot you already have')
+  .option('-n, --limit <n>', 'max screens', '30')
+  .option('-p, --platform <list>', 'comma separated: ios,web', 'ios')
+  .option('--app <name>', 'restrict to apps whose name contains this')
+  .option('--images', 'download the screenshots')
+  .option('--json', 'machine-readable output')
+  .action(async (file, options) => {
+    const resolved = path.resolve(file);
+    let bytes;
+    try {
+      bytes = fs.readFileSync(resolved);
+    } catch {
+      throw new Error(`cannot read ${file}`);
+    }
+    if (bytes.length > MAX_VISUAL_SEARCH_BYTES) {
+      throw new Error(`${file} is ${(bytes.length / 1e6).toFixed(1)} MB; the upstream accepts at most 5 MB`);
+    }
+    const extension = path.extname(resolved).toLowerCase();
+    const type = MIME_BY_EXT[extension];
+    if (!type) throw new Error(`unsupported image type "${extension || 'none'}"; use ${Object.keys(MIME_BY_EXT).join(', ')}`);
+
+    if (!options.json) console.error(`uploading ${path.basename(resolved)}...`);
+    const imageId = await uploadVisualSearchImage(bytes, { filename: path.basename(resolved), type });
+
+    const merged = [];
+    let totalCount = 0;
+    let hasMore = false;
+    for (const platform of platformsFrom(options.platform)) {
+      const page = await searchContent(buildVisualSearchQuery({ platform, imageId }), { limit: Number(options.limit) });
+      totalCount += page.totalCount;
+      hasMore = hasMore || page.hasMore;
+      merged.push(...page.results);
+    }
+    const scoped = options.app
+      ? merged.filter(row => String(row.appName || '').toLowerCase().includes(options.app.toLowerCase()))
+      : merged;
+    const results = await withImages(scoped.slice(0, Number(options.limit)), {
+      download: options.images, json: options.json,
+    });
+
+    if (options.json) return out(results);
+    table(results.map(screen => ({
+      id: screen.id.slice(0, 8),
+      app: truncate(screen.appName, 22),
+      platform: screen.platform,
+      patterns: truncate(screen.patterns.join(', '), 34),
+      image: screen.path || '-',
+    })), ['id', 'app', 'platform', 'patterns', 'image']);
+    reportCount(results.length, totalCount, hasMore);
+  });
+
 program.command('app <name>')
   .description("Every screen Mobbin holds for one app, newest version first")
   .option('-n, --limit <n>', 'max screens', '40')
@@ -417,21 +608,26 @@ program.command('screen <id>')
   });
 
 program.command('tags [kind]')
-  .description('The vocabulary the filters accept: patterns, elements, actions, categories')
-  .option('-p, --platform <platform>', 'ios or web', 'ios')
+  .description('The vocabulary the filters accept: patterns, elements, actions, categories, styles')
+  .option('-p, --platform <platform>', 'ios, web, or sites', 'ios')
   .option('--search <text>', 'only tags whose name or synonyms contain this')
   .option('--definitions', 'include the definition of each tag')
   .option('--refresh', 're-fetch the cached vocabulary')
   .option('--json', 'machine-readable output')
   .action(async (kind, options) => {
-    const [platform] = platformsFrom(options.platform);
+    // Sites are their own experience rather than a platform, but they are a
+    // vocabulary a caller browses the same way, so the option accepts both.
+    const isSites = String(options.platform).toLowerCase() === 'sites';
+    const platform = isSites ? 'sites' : platformsFrom(options.platform)[0];
+    const dictionary = isSites ? SITE_FILTERS : FILTERS;
+    const byKind = isSites ? SITE_FILTER_BY_KIND : FILTER_BY_KIND;
     const taxonomy = await fetchTaxonomy({ refresh: options.refresh });
 
-    const selected = kind ? FILTER_BY_KIND.get(String(kind).toLowerCase()) : null;
+    const selected = kind ? byKind.get(String(kind).toLowerCase()) : null;
     if (kind && !selected) {
-      throw new Error(`tags kind must be one of ${Object.values(FILTERS).map(spec => spec.plural).join(', ')}`);
+      throw new Error(`tags kind must be one of ${Object.values(dictionary).map(spec => spec.plural).join(', ')}`);
     }
-    const wanted = selected ? [[selected, FILTERS[selected]]] : Object.entries(FILTERS);
+    const wanted = selected ? [[selected, dictionary[selected]]] : Object.entries(dictionary);
 
     const needle = options.search?.toLowerCase();
     const sections = wanted.map(([option, spec]) => {
@@ -487,12 +683,21 @@ program.command('stats')
       });
       screens += count;
     }
+    const sites = await searchContent(buildSiteSearchQuery({ contentType: 'sites' }), { limit: 1 });
+    const sections = await searchContent(buildSiteSearchQuery({ contentType: 'sections' }), { limit: 1 });
+
     out({
       source: BASE,
-      contentTypes: CONTENT_TYPES,
+      contentTypes: [...CONTENT_TYPES, ...SITE_CONTENT_TYPES],
       apps: byPlatform.reduce((total, entry) => total + entry.apps, 0),
       previewScreens: screens,
       byPlatform,
+      sites: {
+        sites: sites.totalCount,
+        sections: sections.totalCount,
+        vocabulary: Object.fromEntries(Object.entries(SITE_FILTERS)
+          .map(([, spec]) => [spec.plural, tagsFor(taxonomy, 'sites', spec.catalog).length])),
+      },
       imageDir: IMG_DIR,
     });
   });
@@ -508,8 +713,35 @@ try {
     UPSTREAM_UNAUTHENTICATED: `${BASE} is not signed in; this is an upstream problem, not a missing credential of yours`,
     UPSTREAM_UNAVAILABLE: `${BASE} could not be reached`,
   };
-  const message = messages[error.code]
+  let message = messages[error.code]
     || (['TimeoutError', 'AbortError'].includes(error.name) ? `${BASE} did not respond in time` : error.message);
+
+  // "not signed in" says nothing about whether this is a blip or has been
+  // broken since yesterday. The proxy reports its own session state, so ask.
+  if (error.code === 'UPSTREAM_UNAUTHENTICATED') {
+    const health = await fetchHealth();
+    if (health) message += `\n${describeSession(health)}`;
+  }
   console.error(message);
   process.exitCode = 1;
+}
+
+function describeSession(health) {
+  if (health.stopped) {
+    const why = health.lastError?.message ? ` (${health.lastError.message})` : '';
+    return `the proxy has given up renewing its session and needs attention${why}`;
+  }
+  if (health.expiresAt && !health.sessionValid) {
+    return `its session expired ${ago(health.expiresAt)}; it should renew itself shortly`;
+  }
+  if (health.lastError) return `last renewal failed ${ago(health.lastError.at)}: ${health.lastError.message}`;
+  return 'the proxy reports a valid session, so this may be a transient upstream failure';
+}
+
+function ago(timestamp) {
+  const seconds = Math.max(0, Math.round((Date.now() - Date.parse(timestamp)) / 1000));
+  if (!Number.isFinite(seconds)) return 'at an unknown time';
+  if (seconds < 90) return `${seconds}s ago`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m ago`;
+  return `${Math.round(seconds / 3600)}h ago`;
 }

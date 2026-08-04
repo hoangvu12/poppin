@@ -35,6 +35,9 @@ working directory is the poppin repo itself, use `poppin` or
 | A specific control ("bottom sheets", "date pickers") | `poppin elements <query>` |
 | Everything one app ships, or how it changed | `poppin app <name>` |
 | Which apps exist in a space | `poppin find <query>` |
+| Marketing/landing pages of real companies | `poppin sites <query>` |
+| One piece of a landing page ("hero", "pricing table") | `poppin sections --pattern <name>` |
+| Screens that look like an image they have | `poppin similar <file>` |
 
 ## The vocabulary is the whole trick
 
@@ -175,20 +178,41 @@ One well-aimed search with a sensible `-n` beats several narrow ones. Skip
 `--images` only when you truly do not need the pictures — a result without them
 is just ids, which is rarely what the user wanted.
 
+## Sites are a separate library
+
+`sites` and `sections` search marketing pages, not apps. They have no platform,
+and their vocabulary is its own: `poppin tags --platform sites` lists the
+categories, styles and page/section patterns they accept. An app category name
+will not work there even when the word is identical, so resolve against the
+sites vocabulary before filtering.
+
+Sites have no free-text mode either. An unrecognised query fails with
+suggestions rather than falling back, which is the useful outcome — take the
+suggestion.
+
+## Searching by image
+
+`poppin similar <file>` uploads a screenshot and ranks Mobbin's library by
+visual likeness. Screens only, 5 MB maximum, PNG/JPEG/WebP/GIF/AVIF. A natural
+pairing is to pull one screen with `--images` and then search on it.
+
 ## Scope and limits
 
-- **One page per search.** Up to 100 rows come back, and the footer reports how
-  many matched in total: `5 result(s) of 87 matching upstream` means 82 more
-  exist that this client cannot page to. Say so rather than implying the result
-  set is complete.
+- **One page per search, for screens, elements, flows and sections.** Paging
+  those is a paid feature of Mobbin, and the upstream account does not have it.
+  The footer reports the true total: `5 result(s) of 87 matching upstream` means
+  82 more exist that this client cannot page to. Say so rather than implying the
+  result set is complete. `find` and `sites` are not gated and do read
+  everything.
 - **Free text is keyword-ranked, not semantic.** Mobbin's AI-ranked `deep` mode
-  is not available to this upstream. If a concept returns weak results, try a
+  is refused for this upstream. If a concept returns weak results, try a
   vocabulary term from `poppin tags` instead of rephrasing.
 - **Company stage, region, language, web page pattern and page type filters do
   not work.** Mobbin's UI offers them; these endpoints ignore them. Do not
   promise them, and do not try to pass them.
-- **Search by image is not supported.**
-- **Marketing sites are not covered.** Mobbin's sites experience — landing page
-  sections, heroes, footers — is not wired up. Say so if asked.
+- **`restricted: true` is not a download failure.** It reports what Mobbin's own
+  UI would put behind a subscription, which is most rows. Screenshots come from
+  the CDN directly and download regardless, so do not warn the user off a result
+  or skip it because of this flag.
 - Run `poppin stats` for current catalog and vocabulary sizes rather than
   quoting a figure from memory.

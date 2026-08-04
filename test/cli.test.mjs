@@ -29,7 +29,12 @@ const CATALOG = {
 };
 
 const group = (displayName, tags) => ({ displayName, tags });
-const tag = (displayName, synonyms = []) => ({ displayName, synonyms, definition: `${displayName} definition` });
+const tag = (displayName, synonyms = [], id = null) => ({
+  id: id ?? `tag-${displayName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
+  displayName,
+  synonyms,
+  definition: `${displayName} definition`,
+});
 
 /** A cut-down copy of Mobbin's real dictionary, including the synonyms that make resolution work. */
 const TAXONOMY = {
@@ -50,7 +55,35 @@ const TAXONOMY = {
     screenElements: [group('Overlay', [tag('Button')])],
     flowActions: [group('New User Experience', [tag('Onboarding')])],
   },
+  // Marketing sites are their own experience, with dictionaries that collide by
+  // name with the app ones: a sites "category" is not an app category.
+  sites: {
+    categories: [group('Categories', [tag('Finance'), tag('Technology')])],
+    pageAndSectionPatterns: [group('Page and Section Patterns', [tag('Hero Section'), tag('Footer Section')])],
+    styles: [group('Styles', [tag('Dark'), tag('Brutalist', ['Neo-Brutalism'])])],
+  },
 };
+
+const siteRow = (id, name) => ({
+  id,
+  name,
+  tagline: `${name} tagline`,
+  url: `https://${name.toLowerCase()}.test/`,
+  latest_site_version: `${id}-v1`,
+  is_restricted: false,
+  logoCdnImgSources: { src: `https://bytescale.mobbin.com/FW25bBB/image/mobbin.com/prod/${id}.webp` },
+});
+
+const sectionRow = (id, patterns) => ({
+  id,
+  site_page_id: `${id}-page`,
+  page_url: `https://linear.test/${id}`,
+  patterns,
+  type: 'image',
+  site_version: `${id}-v1`,
+  restricted: false,
+  page_image_url: `https://bytescale.mobbin.com/FW25bBB/image/mobbin.com/prod/${id}.webp`,
+});
 
 const screenRow = (id, over = {}) => ({
   type: 'curated',
@@ -106,9 +139,17 @@ before(async () => {
     request.on('data', chunk => chunks.push(chunk));
     request.on('end', () => {
       const url = request.url;
-      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}');
+      const raw = Buffer.concat(chunks).toString();
+      // The visual-search upload is multipart, so a body is not always JSON.
+      let body;
+      try {
+        body = JSON.parse(raw || '{}');
+      } catch {
+        body = { raw };
+      }
       seen.counts[url] = (seen.counts[url] || 0) + 1;
       seen.bodies[url] = body;
+      seen.headers = { ...(seen.headers || {}), [url]: request.headers };
 
       const send = (value) => {
         response.writeHead(200, { 'content-type': 'application/json' });
@@ -161,6 +202,46 @@ before(async () => {
           ],
         }] : [];
         return send({ searchRequestId: body.searchRequestId, data: rows, hasNextPage: false, totalCount: rows.length });
+      }
+
+      // Sites page freely, so the stub serves two pages to exercise the loop.
+      if (url === '/api/search/fetch-search-page-sites') {
+        const page = body.pageIndex ?? 0;
+        const rows = page === 0
+          ? [siteRow('site-0001', 'Linear'), siteRow('site-0002', 'Stripe')]
+          : page === 1 ? [siteRow('site-0003', 'Vercel')] : [];
+        return send({ searchRequestId: body.searchRequestId, data: rows, hasNextPage: page < 1, totalCount: 3 });
+      }
+
+      if (url === '/api/search/fetch-search-page-sections') {
+        const query = body.searchQuery;
+        // Shape validation: sections declare textInScreenshotQuery, and the
+        // upstream drops the request when a declared field is missing.
+        if (!('textInScreenshotQuery' in query) || !('pageAndSectionPatterns' in query)) {
+          response.writeHead(200, { 'content-type': 'application/json' });
+          return response.end('');
+        }
+        // Paging is gated for sections: page 1 is answered with nothing.
+        if ((body.pageIndex ?? 0) > 0) {
+          return send({ searchRequestId: body.searchRequestId, data: [], hasNextPage: false, totalCount: 0 });
+        }
+        const rows = query.pageAndSectionPatterns?.includes('Hero Section')
+          ? [sectionRow('sect-0001', ['Hero Section'])]
+          : [sectionRow('sect-0002', ['Footer Section'])];
+        return send({ searchRequestId: body.searchRequestId, data: rows, hasNextPage: true, totalCount: 500 });
+      }
+
+      if (url === '/api/visual-search-image/create') {
+        // A rejected image is a 200 with a null body, not an error status.
+        if (!body.raw?.includes('image')) return send(null);
+        return send({ id: 'visual-0001' });
+      }
+
+      if (url === '/api/search-bar/search') {
+        const refs = body.query === 'monetisation'
+          ? { primary: [{ id: 'tag-subscription-paywall', type: 'filter-tag' }], other: [], secondaryPlatform: [], sites: [] }
+          : { primary: [], other: [], secondaryPlatform: [], sites: [] };
+        return send({ experience: body.experience, ...refs });
       }
 
       if (url === '/api/search/fetch-search-page-apps') {
@@ -541,11 +622,172 @@ test('stats reports the live catalog and the vocabulary sizes', async () => {
   assert.equal(stats.byPlatform[0].vocabulary.patterns, 3);
 });
 
+// ------------------------------------------------------------------ sites
+test('sites are searched by category and style', async () => {
+  const result = await run(['sites', '--category', 'Finance', '--style', 'Dark', '--json']);
+  assert.equal(result.status, 0);
+  const query = seen.bodies['/api/search/fetch-search-page-sites'].searchQuery;
+  assert.deepEqual(query.categories, ['Finance']);
+  assert.deepEqual(query.styles, ['Dark']);
+  assert.equal(query.contentType, 'sites');
+});
+
+test('a bare sites query resolves against the sites vocabulary, not the app one', async () => {
+  // "Finance" exists in both dictionaries; the sites command must not reach
+  // for appCategories, whose values the sites endpoint would silently ignore.
+  const result = await run(['sites', 'finance', '--json']);
+  assert.equal(result.status, 0);
+  assert.deepEqual(seen.bodies['/api/search/fetch-search-page-sites'].searchQuery.categories, ['Finance']);
+});
+
+test('sites are paged to completion because paging is not gated for them', async () => {
+  const result = await run(['sites', '--json']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.counts['/api/search/fetch-search-page-sites'], 2, 'both pages must be read');
+  assert.equal(JSON.parse(result.stdout).length, 3);
+});
+
+test('the second page echoes the request id from the first', async () => {
+  await run(['sites', '--json']);
+  assert.ok(seen.bodies['/api/search/fetch-search-page-sites'].searchRequestId);
+  assert.equal(seen.bodies['/api/search/fetch-search-page-sites'].pageIndex, 1);
+});
+
+test('sections send every field their shape declares', async () => {
+  // Omitting a declared field is not a narrower query: the upstream drops the
+  // request and answers with an empty body.
+  const result = await run(['sections', '--pattern', 'Hero Section', '--json']);
+  assert.equal(result.status, 0);
+  const query = seen.bodies['/api/search/fetch-search-page-sections'].searchQuery;
+  assert.ok('textInScreenshotQuery' in query);
+  assert.ok('pageAndSectionPatterns' in query);
+  assert.deepEqual(query.pageAndSectionPatterns, ['Hero Section']);
+  assert.equal(JSON.parse(result.stdout)[0].patterns[0], 'Hero Section');
+});
+
+test('sections stop after the page they are allowed and say how many exist', async () => {
+  const result = await run(['sections', '--pattern', 'Hero Section']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.counts['/api/search/fetch-search-page-sections'], 1, 'paging is gated; do not ask twice');
+  assert.match(result.stdout, /of 500 matching upstream/);
+});
+
+test('an unknown sites value fails with suggestions rather than an empty result', async () => {
+  const result = await run(['sites', '--style', 'Neon']);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /not a known value/);
+});
+
+test('sites vocabulary is browsable', async () => {
+  const result = await run(['tags', 'styles', '--platform', 'sites', '--json']);
+  assert.equal(result.status, 0);
+  const [section] = JSON.parse(result.stdout);
+  assert.equal(section.field, 'styles');
+  assert.deepEqual(section.tags.map(t => t.name), ['Dark', 'Brutalist']);
+});
+
+// ---------------------------------------------------------- visual search
+test('an image is uploaded once and searched by the id it returns', async () => {
+  const shot = path.join(imageDir, 'shot.png');
+  fs.writeFileSync(shot, Buffer.from('89504e470d0a1a0a', 'hex'));
+  const result = await run(['similar', shot, '--json']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.counts['/api/visual-search-image/create'], 1);
+  const query = seen.bodies['/api/search/fetch-search-page-screens'].searchQuery;
+  assert.equal(query.type, 'visual_search');
+  assert.deepEqual(query.image, { id: 'visual-0001' });
+  assert.equal(query.sortBy, 'similarity');
+});
+
+test('an unsupported image type is refused before anything is uploaded', async () => {
+  const shot = path.join(imageDir, 'notes.txt');
+  fs.writeFileSync(shot, 'not an image');
+  const result = await run(['similar', shot]);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /unsupported image type/);
+  assert.equal(seen.counts['/api/visual-search-image/create'], undefined);
+});
+
+// ------------------------------------------------------ query resolution
+test('a query the local vocabulary misses is resolved by the upstream index', async () => {
+  const result = await run(['search', 'monetisation', '--json']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.bodies['/api/search-bar/search'].query, 'monetisation');
+  assert.deepEqual(
+    seen.bodies['/api/search/fetch-search-page-screens'].searchQuery.screenPatterns,
+    ['Subscription & Paywall'],
+    'the tag id it answers with must be mapped back to a display name',
+  );
+});
+
+test('a query neither source recognises still falls back to free text', async () => {
+  const result = await run(['search', 'zzzznothing', '--json']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.bodies['/api/search/fetch-search-page-screens'].searchQuery.type, 'free_text_search');
+});
+
+test('the local vocabulary is preferred, so a known term costs no round trip', async () => {
+  const result = await run(['search', 'upgrade', '--json']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.counts['/api/search-bar/search'], undefined);
+});
+
 // --------------------------------------------------------------- upstream
 test('an unreachable upstream fails with a readable message', async () => {
   const result = await run(['find', 'calm'], { POPPIN_BASE: 'http://127.0.0.1:1' });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /could not be reached/);
+  assert.doesNotMatch(result.stderr, /\n\s+at /);
+});
+
+/** A stand-in proxy that is signed out, with whatever health it should report. */
+async function withSignedOutUpstream(health, body) {
+  const stub = http.createServer((request, response) => {
+    if (request.url === '/healthz') {
+      response.writeHead(health ? 503 : 500, { 'content-type': 'application/json' });
+      return response.end(health ? JSON.stringify(health) : 'no health here');
+    }
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ error: { message: 'unauthenticated' } }));
+  });
+  await new Promise(resolve => stub.listen(0, '127.0.0.1', resolve));
+  try {
+    return await body(`http://127.0.0.1:${stub.address().port}`);
+  } finally {
+    await new Promise(resolve => stub.close(resolve));
+  }
+}
+
+test('a signed-out upstream is explained with how long it has been down', async () => {
+  const health = {
+    sessionValid: false,
+    expiresAt: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+    lastRefresh: null,
+    lastError: null,
+    stopped: false,
+  };
+  const result = await withSignedOutUpstream(health, base2 => run(['search', 'upgrade'], { POPPIN_BASE: base2 }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /is not signed in/);
+  assert.match(result.stderr, /expired 3h ago/);
+});
+
+test('a proxy that has given up says so instead of implying it will recover', async () => {
+  const health = {
+    sessionValid: false,
+    expiresAt: null,
+    lastError: { message: 'supabase login 400: invalid_credentials', at: new Date().toISOString(), terminal: true },
+    stopped: true,
+  };
+  const result = await withSignedOutUpstream(health, base2 => run(['search', 'upgrade'], { POPPIN_BASE: base2 }));
+  assert.match(result.stderr, /given up renewing its session/);
+  assert.match(result.stderr, /invalid_credentials/);
+});
+
+test('an upstream with no health endpoint still reports the original failure', async () => {
+  const result = await withSignedOutUpstream(null, base2 => run(['search', 'upgrade'], { POPPIN_BASE: base2 }));
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /is not signed in/);
   assert.doesNotMatch(result.stderr, /\n\s+at /);
 });
 
