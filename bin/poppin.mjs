@@ -10,8 +10,8 @@ import { fetchCatalog, fetchCatalogs, toScreens } from '../src/catalog.mjs';
 import { matchAppName, rankApps } from '../src/search.mjs';
 import {
   FREE_TEXT_CONTENT_TYPES, MAX_VISUAL_SEARCH_BYTES, buildFreeTextQuery, buildSearchQuery,
-  buildSiteSearchQuery, buildVisualSearchQuery, fetchAppLibrary, resolveViaSearchBar,
-  searchContent, uploadVisualSearchImage,
+  buildSiteSearchQuery, buildVisualSearchQuery, fetchAppLibrary, fetchScreenInfo,
+  resolveViaSearchBar, searchContent, uploadVisualSearchImage,
 } from '../src/mobbin.mjs';
 import { fetchTaxonomy, findTagById, resolveTagName, tagsFor } from '../src/taxonomy.mjs';
 import { fetchHealth } from '../src/upstream.mjs';
@@ -593,18 +593,29 @@ program.command('screen <id>')
   .action(async (id, options) => {
     const wanted = id.toLowerCase();
     const catalog = await fetchCatalogs(platformsFrom(options.platform));
-    const screen = toScreens(catalog).find(candidate => candidate.id.toLowerCase().startsWith(wanted));
+    // The catalog holds only a few preview screens per app, so it answers a
+    // prefix cheaply but knows almost nothing. Any id from a search result has
+    // to be asked for directly.
+    const screen = toScreens(catalog).find(candidate => candidate.id.toLowerCase().startsWith(wanted))
+      || await fetchScreenInfo(id);
     if (!screen) {
-      console.log('not found');
+      // The tables print shortened ids, but only catalog previews can be found
+      // by prefix — the upstream will resolve a screen only by its whole id.
+      const isPrefix = id.length < 36;
+      console.log(isPrefix
+        ? `not found. "${id}" is a shortened id, which only works for the preview screens in the catalog.\nFor a screen from search results, pass the full id — \`--json\` prints it.`
+        : 'not found');
       process.exitCode = 1;
       return;
     }
     const [resolved] = await withImages([screen], { download: options.images, json: options.json });
 
     if (options.json) return out(resolved);
-    console.log(`\n${resolved.appName}  [${resolved.platform}]`);
+    console.log(`\n${resolved.appName || '(unknown app)'}  [${resolved.platform || '?'}]`);
     console.log(`id: ${resolved.id}`);
     console.log(`image: ${resolved.path || 'not downloaded'}`);
+    if (resolved.fullpage) console.log(`full page: ${resolved.fullpage}`);
+    if (resolved.animation) console.log(`animation: ${resolved.animation}`);
   });
 
 program.command('tags [kind]')

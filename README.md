@@ -167,13 +167,20 @@ switches to Mobbin's own app search instead of local ranking.
 
 ### screen
 
-One screen by id or id prefix. This command downloads the screenshot by
-default, since asking for a single screen usually means you want to look at it.
+One screen, downloaded by default since asking for a single screen usually
+means you want to look at it. A full id is resolved upstream and works for any
+screen; a shortened one only matches the preview screens held in the catalog,
+because the upstream will resolve a screen only by its whole id. The tables
+print shortened ids, so use `--json` when you need the full one.
 
 ```bash
-poppin screen 2729b66d
-poppin screen 2729b66d --no-images --json
+poppin screen 2729b66d                       # a catalog preview, by prefix
+poppin screen 539361ea-cd64-4829-b6ac-e5dd685b8de8
+poppin screen 539361ea-cd64-4829-b6ac-e5dd685b8de8 --no-images --json
 ```
+
+This is also the only place the full-page capture and the animation recording
+are exposed, when a screen has them.
 
 ### sites
 

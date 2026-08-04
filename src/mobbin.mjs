@@ -324,6 +324,41 @@ function normaliseSection(row) {
   };
 }
 
+const SCREEN_INFO_PATH = '/api/screen/fetch-screen-info';
+
+/**
+ * One screen by its full id, whatever it came from.
+ *
+ * The catalog only carries a few preview screens per app, so an id from a
+ * search result is not in it. This resolves any of them, and is also the only
+ * place the full-page capture and the animation recording are exposed.
+ *
+ * Returns null rather than throwing for an id the upstream does not know: the
+ * caller has usually already tried a cheaper lookup and wants to fall through.
+ */
+export async function fetchScreenInfo(screenId) {
+  let value;
+  try {
+    value = await postJson(SCREEN_INFO_PATH, { screenId });
+  } catch {
+    return null;
+  }
+  if (!value?.id) return null;
+  const app = value.appVersion?.app || {};
+  return {
+    id: String(value.id),
+    appId: app.id ? String(app.id) : null,
+    appName: app.appName || null,
+    platform: app.platform || null,
+    publishedAt: value.appVersion?.publishedAt || null,
+    screenNumber: value.screenNumber ?? null,
+    url: value.screenUrl || value.screenCdnImgSources?.src || null,
+    fullpage: value.fullpageScreenCdnImgSources?.src || null,
+    animation: value.animationCdnVideoSources?.source?.url || null,
+    path: null,
+  };
+}
+
 /**
  * Every screen Mobbin holds for one app, grouped by the version it shipped in.
  * This is the app's real library — hundreds to thousands of screens — rather

@@ -190,6 +190,12 @@ Sites have no free-text mode either. An unrecognised query fails with
 suggestions rather than falling back, which is the useful outcome — take the
 suggestion.
 
+## Fetching one screen
+
+`poppin screen <id>` needs the **full** id for anything that came from a search
+— the shortened ids in the tables only match the handful of preview screens in
+the catalog. Take the id from `--json` output rather than the table.
+
 ## Searching by image
 
 `poppin similar <file>` uploads a screenshot and ranks Mobbin's library by

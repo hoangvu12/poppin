@@ -231,6 +231,22 @@ before(async () => {
         return send({ searchRequestId: body.searchRequestId, data: rows, hasNextPage: true, totalCount: 500 });
       }
 
+      if (url === '/api/screen/fetch-screen-info') {
+        if (!String(body.screenId).startsWith('sign-0001')) return send(null);
+        return send({
+          id: body.screenId,
+          screenNumber: 2,
+          screenUrl: 'https://example.test/content/app_screens/sign-0001.png',
+          appVersion: {
+            app: { id: 'app-calm', appName: 'Calm', platform: 'ios' },
+            publishedAt: '2026-07-27T10:03:15.055+00:00',
+          },
+          screenCdnImgSources: { src: 'https://bytescale.mobbin.com/FW25bBB/image/mobbin.com/prod/s.webp' },
+          fullpageScreenCdnImgSources: null,
+          animationCdnVideoSources: { source: { url: 'https://bytescale.mobbin.com/FW25bBB/video/mobbin.com/prod/anim.mp4' } },
+        });
+      }
+
       if (url === '/api/visual-search-image/create') {
         // A rejected image is a 200 with a null body, not an error status.
         if (!body.raw?.includes('image')) return send(null);
@@ -620,6 +636,29 @@ test('stats reports the live catalog and the vocabulary sizes', async () => {
   assert.equal(stats.previewScreens, 3);
   assert.equal(stats.imageDir, imageDir);
   assert.equal(stats.byPlatform[0].vocabulary.patterns, 3);
+});
+
+// ----------------------------------------------------------------- screen
+test('a screen id from search results is resolved upstream, not from the catalog', async () => {
+  const result = await run(['screen', 'sign-0001-full-id-0000000000000000000', '--no-images', '--json']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.bodies['/api/screen/fetch-screen-info'].screenId, 'sign-0001-full-id-0000000000000000000');
+  const screen = JSON.parse(result.stdout);
+  assert.equal(screen.appName, 'Calm');
+  assert.equal(screen.animation, 'https://bytescale.mobbin.com/FW25bBB/video/mobbin.com/prod/anim.mp4');
+});
+
+test('a shortened id says why it cannot be looked up rather than just failing', async () => {
+  const result = await run(['screen', 'deadbeef', '--no-images']);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /shortened id/);
+  assert.match(result.stdout, /full id/);
+});
+
+test('a catalog preview is still found by prefix without a round trip', async () => {
+  const result = await run(['screen', 'screen-aaaa', '--no-images', '--json']);
+  assert.equal(result.status, 0);
+  assert.equal(seen.counts['/api/screen/fetch-screen-info'], undefined);
 });
 
 // ------------------------------------------------------------------ sites
