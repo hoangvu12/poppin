@@ -1,43 +1,20 @@
-import { BASE, PLATFORMS, USER_AGENT } from './config.mjs';
+import { PLATFORMS } from './config.mjs';
+import { postJson, upstreamError } from './upstream.mjs';
 
 const CATALOG_PATH = '/api/search-bar/fetch-searchable-apps';
-const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
- * The catalog is the whole data surface: one record per app, carrying Mobbin's
- * curated keywords and roughly four preview screens. It is fetched per command
- * rather than mirrored locally, so results are never stale and the client owns
- * no storage.
+ * The app index behind Mobbin's search bar: one record per app with its
+ * curated keywords and roughly four preview screens. It is what `find` ranks
+ * locally, and it is the only place an app's id can be looked up by name,
+ * which is what the library and screen commands need. Fetched per command so
+ * the client owns no storage and nothing can go stale.
  */
 export async function fetchCatalog(platform = 'ios') {
   if (!PLATFORMS.includes(platform)) throw new Error(`platform must be one of ${PLATFORMS.join(', ')}`);
 
-  let response;
-  try {
-    response = await fetch(new URL(CATALOG_PATH, BASE), {
-      method: 'POST',
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      headers: { 'content-type': 'application/json', 'user-agent': USER_AGENT },
-      body: JSON.stringify({ platform }),
-    });
-  } catch (error) {
-    if (['TimeoutError', 'AbortError'].includes(error.name)) throw error;
-    throw upstreamError('UPSTREAM_UNAVAILABLE', `${BASE} could not be reached`);
-  }
-
-  if (response.status === 429) throw upstreamError('RATE_LIMITED', 'the upstream rate-limited the request');
-  if (!response.ok) throw upstreamError('UPSTREAM_ERROR', `the upstream returned HTTP ${response.status}`);
-
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    throw upstreamError('UPSTREAM_INVALID', 'the upstream returned an unreadable catalog');
-  }
-
-  const records = Array.isArray(payload)
-    ? payload
-    : payload?.value || payload?.data || payload?.apps;
+  const payload = await postJson(CATALOG_PATH, { platform });
+  const records = Array.isArray(payload) ? payload : payload?.data || payload?.apps;
   if (!Array.isArray(records) || !records.length) {
     throw upstreamError('UPSTREAM_INVALID', 'the upstream returned an empty catalog');
   }
@@ -80,10 +57,4 @@ export function toScreens(apps) {
     appName: app.appName,
     platform: app.platform,
   })));
-}
-
-function upstreamError(code, message) {
-  const error = new Error(message);
-  error.code = code;
-  return error;
 }

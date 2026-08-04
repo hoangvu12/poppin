@@ -1,7 +1,7 @@
 {
   "name": "poppin-cli",
-  "version": "0.3.0",
-  "description": "Search real app UI screens from the command line. No account, no database, no local library.",
+  "version": "0.4.0",
+  "description": "Search real app UI screens, flows, and elements from the command line. No account, no database, no local library.",
   "type": "module",
   "bin": {
     "poppin": "./bin/poppin.mjs"
